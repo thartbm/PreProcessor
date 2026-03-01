@@ -118,10 +118,16 @@ server <- function(input, output, session) {
   # ── Raw data ──────────────────────────────────────────────────────────────
   raw_data <- reactive({
     req(input$file)
-    read.csv(input$file$datapath,
-             header = TRUE,
-             sep    = input$sep,
-             check.names = FALSE)
+    df <- read.csv(input$file$datapath,
+                   header = TRUE,
+                   sep    = input$sep,
+                   check.names = FALSE)
+    # Convert any list columns to character to prevent downstream errors
+    list_cols <- vapply(df, is.list, logical(1))
+    df[list_cols] <- lapply(df[list_cols], function(col) {
+      vapply(col, function(x) if (length(x) == 0) NA_character_ else as.character(x[[1]]), character(1))
+    })
+    df
   })
 
   output$preview <- renderTable({
