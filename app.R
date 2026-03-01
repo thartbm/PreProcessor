@@ -372,7 +372,7 @@ server <- function(input, output, session) {
       function(x) median(x, na.rm = TRUE)
     }
 
-    lhs <- paste(dvs,       collapse = " + ")
+    lhs <- if (length(dvs) == 1) dvs else paste0("cbind(", paste(dvs, collapse = ", "), ")")
     rhs <- paste(group_cols, collapse = " + ")
     agg_formula <- as.formula(paste(lhs, "~", rhs))
 
