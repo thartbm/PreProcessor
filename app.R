@@ -315,6 +315,37 @@ server <- function(input, output, session) {
     head(clean_data(), 10)
   })
 
+  # ── Participant-level descriptives ────────────────────────────────────────
+  participant_info <- reactive({
+    req(clean_data(), input$participant_col)
+
+    info <- input$info_cols
+    part <- input$participant_col
+
+    if (length(info) == 0 || is.null(info)) return(NULL)
+
+    df   <- clean_data()
+    keep <- c(part, info[info %in% names(df)])
+    df_info <- df[, keep, drop = FALSE]
+
+    participants <- unique(df_info[[part]])
+    result <- data.frame(setNames(list(participants), part),
+                         stringsAsFactors = FALSE)
+
+    for (col in info) {
+      if (col %in% names(df_info)) {
+        vals <- sapply(participants, function(p) {
+          x <- df_info[[col]][df_info[[part]] == p]
+          x <- x[!is.na(x)]
+          if (length(x) > 0) x[1] else NA
+        })
+        result[[col]] <- vals
+      }
+    }
+
+    result
+  })
+
   # ── Aggregation ───────────────────────────────────────────────────────────
   agg_data <- reactive({
     req(clean_data(), input$participant_col, input$agg_func)
@@ -350,8 +381,11 @@ server <- function(input, output, session) {
   output_data <- reactive({
     req(agg_data(), input$output_format)
 
-    df  <- agg_data()
-    dvs <- selected_dvs()
+    df   <- agg_data()
+    dvs  <- selected_dvs()
+    ivs  <- selected_ivs()
+    part <- input$participant_col
+    pinfo <- participant_info()
 
     if (input$output_format == "long") {
       id_cols <- setdiff(names(df), dvs)
@@ -368,9 +402,49 @@ server <- function(input, output, session) {
       long_df$id   <- NULL
       rownames(long_df) <- NULL
       long_df <- long_df[, c(id_cols, "variable", "value")]
+
+      # Attach participant info (left-join: keep all rows with valid DV data)
+      if (!is.null(pinfo)) {
+        long_df <- merge(pinfo, long_df, by = part, all.y = TRUE)
+      }
       long_df
     } else {
-      df
+      # Wide format: one row per participant
+      if (length(ivs) == 0) {
+        # No IVs: aggregate already produced one row per participant
+        wide_df <- df[, c(part, dvs), drop = FALSE]
+      } else {
+        # Build IV combination key for each row
+        iv_vals <- df[, ivs, drop = FALSE]
+        iv_keys <- apply(iv_vals, 1, function(row) {
+          paste(paste(ivs, row, sep = "="), collapse = "__")
+        })
+
+        participants <- unique(df[[part]])
+        unique_keys  <- unique(iv_keys)
+
+        # Start with participant column
+        wide_df <- data.frame(setNames(list(participants), part),
+                              stringsAsFactors = FALSE)
+
+        # Add one column per DV per IV combination
+        for (dv in dvs) {
+          for (key in unique_keys) {
+            col_name <- paste(dv, key, sep = "__")
+            vals <- sapply(participants, function(p) {
+              idx <- which(df[[part]] == p & iv_keys == key)
+              if (length(idx) == 0) NA else df[[dv]][idx[1]]
+            })
+            wide_df[[col_name]] <- vals
+          }
+        }
+      }
+
+      # Attach participant info (left-join: keep all participants with valid DV data)
+      if (!is.null(pinfo)) {
+        wide_df <- merge(pinfo, wide_df, by = part, all.y = TRUE)
+      }
+      wide_df
     }
   })
 
