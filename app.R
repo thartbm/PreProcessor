@@ -49,7 +49,7 @@ ui <- navbarPage(
         uiOutput("ui_ivs"),
         hr(),
         h4("Dependent Variables (up to 3)"),
-        p("Continuous variables to be analysed."),
+        p("Continuous variables to be analyzed."),
         uiOutput("ui_dvs")
       ),
       mainPanel(
@@ -300,7 +300,8 @@ server <- function(input, output, session) {
         if (is.null(k) || is.na(k)) k <- 2
         m <- mean(vals, na.rm = TRUE)
         s <- sd(vals,   na.rm = TRUE)
-        vals[!is.na(vals) & (vals < m - k * s | vals > m + k * s)] <- NA
+        is_outlier <- !is.na(vals) & (vals < m - k * s | vals > m + k * s)
+        vals[is_outlier] <- NA
       }
 
       df[[dv]] <- vals
@@ -338,6 +339,9 @@ server <- function(input, output, session) {
     rhs <- paste(group_cols, collapse = " + ")
     agg_formula <- as.formula(paste(lhs, "~", rhs))
 
+    # na.action = na.pass keeps rows whose grouping variables are complete
+    # while allowing DV columns to contain NAs introduced by outlier removal;
+    # those NAs are handled by na.rm = TRUE inside fun.
     result <- aggregate(agg_formula, data = df, FUN = fun, na.action = na.pass)
     result
   })
