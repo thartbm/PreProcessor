@@ -160,7 +160,7 @@ ui <- navbarPage(
 
   # ── Tab 3 : Column Assignment ─────────────────────────────────────────────
   tabPanel(
-    "3. Columns",
+    "3. Variables",
     sidebarLayout(
       sidebarPanel(
         width = 4,
@@ -193,6 +193,14 @@ ui <- navbarPage(
   # ── Tab 4 : Outlier Removal ───────────────────────────────────────────────
   tabPanel(
     "4. Outliers",
+    fluidRow(
+      column(12,
+        h4("Row Removal Rules"),
+        p("Remove rows where a column meets a condition (e.g. catch trials or incorrect responses)."),
+        uiOutput("rr_ui"),
+        hr()
+      )
+    ),
     fluidRow(
       column(12,
         p("For each dependent variable you can apply hard limits, SD-based removal,
@@ -316,8 +324,10 @@ server <- function(input, output, session) {
   })
 
   # ── Column definitions & derived data ────────────────────────────────────
-  col_defs     <- reactiveVal(list())
-  n_bool_rules <- reactiveVal(1)
+  col_defs        <- reactiveVal(list())
+  n_bool_rules    <- reactiveVal(1)
+  row_rmv_rules   <- reactiveVal(list())
+  rr_rule_counter <- reactiveVal(0L)
 
   derived_data <- reactive({
     req(upload_data())
@@ -327,6 +337,33 @@ server <- function(input, output, session) {
         { df[[def$name]] <- compute_column(df, def) },
         error = function(e) NULL
       )
+    }
+    df
+  })
+
+  row_filtered_data <- reactive({
+    df <- derived_data()
+    for (rule in row_rmv_rules()) {
+      if (!(rule$col %in% names(df))) next
+      col_vals <- df[[rule$col]]
+      num_val  <- suppressWarnings(as.numeric(rule$val))
+      if (!is.na(num_val)) {
+        col_vals <- suppressWarnings(as.numeric(col_vals))
+        cmp_val  <- num_val
+      } else {
+        cmp_val <- rule$val
+      }
+      mask <- switch(rule$op,
+        "==" = col_vals == cmp_val,
+        "!=" = col_vals != cmp_val,
+        "<"  = col_vals <  cmp_val,
+        "<=" = col_vals <= cmp_val,
+        ">"  = col_vals >  cmp_val,
+        ">=" = col_vals >= cmp_val,
+        rep(FALSE, nrow(df))
+      )
+      mask[is.na(mask)] <- FALSE
+      df <- df[!mask, , drop = FALSE]
     }
     df
   })
@@ -563,7 +600,7 @@ server <- function(input, output, session) {
 
   # ── Filtered data ──────────────────────────────────────────────────────────
   filtered_data <- reactive({
-    req(derived_data(), input$participant_col)
+    req(row_filtered_data(), input$participant_col)
 
     part <- input$participant_col
     info <- input$info_cols  # may be NULL
@@ -571,9 +608,9 @@ server <- function(input, output, session) {
     dvs  <- selected_dvs()
 
     keep <- unique(c(part, info, ivs, dvs))
-    keep <- keep[keep %in% names(derived_data())]
+    keep <- keep[keep %in% names(row_filtered_data())]
 
-    df <- derived_data()[, keep, drop = FALSE]
+    df <- row_filtered_data()[, keep, drop = FALSE]
 
     # Remove rows with any missing DV value
     if (length(dvs) > 0) {
@@ -600,11 +637,64 @@ server <- function(input, output, session) {
     head(filtered_data(), 10)
   })
 
+  # ── Row Removal UI ────────────────────────────────────────────────────────
+  output$rr_ui <- renderUI({
+    req(derived_data())
+    cols <- names(derived_data())
+    ops  <- c("==", "!=", "<", "<=", ">", ">=")
+    rules <- row_rmv_rules()
+
+    rule_items <- if (length(rules) > 0) {
+      lapply(rules, function(r) {
+        div(style = "margin-bottom: 4px;",
+            tags$code(paste(r$col, r$op, r$val)),
+            " ",
+            actionButton(paste0("rr_del_", r$id), "\u00d7",
+                         class = "btn-xs btn-danger",
+                         style = "padding:1px 6px;"))
+      })
+    } else {
+      list(p(tags$em("No rules added yet.")))
+    }
+
+    tagList(
+      do.call(tagList, rule_items),
+      fluidRow(
+        column(3, selectInput("rr_col", "Column:", choices = cols)),
+        column(2, selectInput("rr_op",  "Operator:", choices = ops)),
+        column(3, textInput("rr_val", "Value:", placeholder = "e.g. 0 or catch")),
+        column(2, div(style = "margin-top: 25px;",
+                      actionButton("rr_add", "Add Rule", class = "btn-primary btn-sm")))
+      )
+    )
+  })
+
+  observeEvent(input$rr_add, {
+    col <- input$rr_col %||% ""
+    op  <- input$rr_op  %||% "=="
+    val <- trimws(input$rr_val %||% "")
+    if (!nzchar(col) || !nzchar(val)) return()
+    counter <- rr_rule_counter() + 1L
+    rr_rule_counter(counter)
+    rules <- row_rmv_rules()
+    row_rmv_rules(c(rules, list(list(id = counter, col = col, op = op, val = val))))
+  })
+
+  # Delete buttons for individual row-removal rules (keyed by unique rule ID)
+  observe({
+    lapply(row_rmv_rules(), function(r) {
+      btn_id <- paste0("rr_del_", r$id)
+      observeEvent(input[[btn_id]], {
+        row_rmv_rules(Filter(function(x) x$id != r$id, row_rmv_rules()))
+      }, ignoreInit = TRUE, once = TRUE)
+    })
+  })
+
   # ── Outlier UI (one panel per DV, index-based IDs for safety) ─────────────
   output$outlier_ui <- renderUI({
     dvs <- selected_dvs()
     if (length(dvs) == 0) {
-      return(p("Please select at least one dependent variable in the Columns tab."))
+      return(p("Please select at least one dependent variable in the Variables tab."))
     }
 
     panels <- lapply(seq_along(dvs), function(i) {
