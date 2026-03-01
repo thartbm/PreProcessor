@@ -13,8 +13,9 @@ ui <- navbarPage(
       sidebarPanel(
         width = 3,
         fileInput(
-          "file", "Upload CSV File",
-          accept = c("text/csv", "text/comma-separated-values", ".csv")
+          "file", "Upload CSV File(s)",
+          accept   = c("text/csv", "text/comma-separated-values", ".csv"),
+          multiple = TRUE
         ),
         radioButtons(
           "sep", "Column Separator",
@@ -118,10 +119,18 @@ server <- function(input, output, session) {
   # ── Raw data ──────────────────────────────────────────────────────────────
   raw_data <- reactive({
     req(input$file)
-    df <- read.csv(input$file$datapath,
-                   header = TRUE,
-                   sep    = input$sep,
-                   check.names = FALSE)
+    dfs <- lapply(input$file$datapath, function(path) {
+      read.csv(path, header = TRUE, sep = input$sep, check.names = FALSE)
+    })
+    dfs <- Filter(function(d) nrow(d) > 0, dfs)
+    req(length(dfs) > 0)
+    all_cols <- unique(c(names(dfs[[1]]), unlist(lapply(dfs, names))))
+    dfs <- lapply(dfs, function(d) {
+      missing_cols <- setdiff(all_cols, names(d))
+      if (length(missing_cols) > 0) d[missing_cols] <- NA
+      d[all_cols]
+    })
+    df <- do.call(rbind, dfs)
     # Convert any list columns to character to prevent downstream errors
     list_cols <- vapply(df, is.list, logical(1))
     df[list_cols] <- lapply(df[list_cols], function(col) {
