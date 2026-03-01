@@ -1,5 +1,91 @@
 library(shiny)
 
+`%||%` <- function(a, b) if (!is.null(a)) a else b
+
+# ── Helper functions for new-column computation ───────────────────────────────
+
+eval_bool_condition <- function(col_vals, op, val) {
+  num_val <- suppressWarnings(as.numeric(val))
+  if (!is.na(num_val)) {
+    col_vals <- suppressWarnings(as.numeric(col_vals))
+    val <- num_val
+  }
+  switch(op,
+    "==" = col_vals == val,
+    "!=" = col_vals != val,
+    "<"  = col_vals <  val,
+    "<=" = col_vals <= val,
+    ">"  = col_vals >  val,
+    ">=" = col_vals >= val,
+    rep(FALSE, length(col_vals))
+  )
+}
+
+compute_column <- function(df, def) {
+  if (def$type == "math2") {
+    v1 <- as.numeric(df[[def$col1]])
+    v2 <- as.numeric(df[[def$col2]])
+    switch(def$op,
+      "+" = v1 + v2,
+      "-" = v1 - v2,
+      "*" = v1 * v2,
+      "/" = v1 / v2
+    )
+  } else if (def$type == "transform") {
+    v <- as.numeric(df[[def$col]])
+    switch(def$transform,
+      "log_nat" = log(v),
+      "log10"   = log10(v),
+      "log2"    = log2(v),
+      "log_b"   = log(v, base = as.numeric(def$param)),
+      "sqrt"    = sqrt(v),
+      "exp"     = exp(v),
+      "power"   = v ^ as.numeric(def$param),
+      "square"  = v ^ 2,
+      "negate"  = -v,
+      "abs"     = abs(v)
+    )
+  } else if (def$type == "boolean") {
+    result <- rep(NA_character_, nrow(df))
+    for (rule in def$rules) {
+      if (!(rule$col1 %in% names(df))) next
+      cond <- eval_bool_condition(df[[rule$col1]], rule$op1, rule$val1)
+      if (!is.null(rule$logic) && rule$logic != "none" &&
+          nzchar(rule$col2 %||% "") && (rule$col2 %in% names(df))) {
+        cond2 <- eval_bool_condition(df[[rule$col2]], rule$op2, rule$val2)
+        cond  <- if (rule$logic == "and") cond & cond2 else cond | cond2
+      }
+      mask <- is.na(result) & !is.na(cond) & cond
+      result[mask] <- rule$result
+    }
+    result[is.na(result)] <- def$default
+    num_result <- suppressWarnings(as.numeric(result))
+    if (!anyNA(num_result)) num_result else result
+  }
+}
+
+format_def_label <- function(def) {
+  if (def$type == "math2") {
+    paste(def$col1, def$op, def$col2)
+  } else if (def$type == "transform") {
+    tr_name <- switch(def$transform,
+      log_nat = "ln",
+      log10   = "log10",
+      log2    = "log2",
+      log_b   = paste0("log_", def$param),
+      sqrt    = "sqrt",
+      exp     = "exp",
+      power   = paste0("x^", def$param),
+      square  = "x\u00b2",
+      negate  = "-x",
+      abs     = "|x|"
+    )
+    paste0(tr_name, "(", def$col, ")")
+  } else if (def$type == "boolean") {
+    paste(length(def$rules), "rule(s)")
+  }
+}
+
 # ── UI ──────────────────────────────────────────────────────────────────────
 
 ui <- navbarPage(
@@ -32,9 +118,45 @@ ui <- navbarPage(
     )
   ),
 
-  # ── Tab 2 : Column Assignment ─────────────────────────────────────────────
+  # ── Tab 2 : New Columns ───────────────────────────────────────────────────
   tabPanel(
-    "2. Columns",
+    "2. New Columns",
+    sidebarLayout(
+      sidebarPanel(
+        width = 4,
+        h4("Create New Column"),
+        radioButtons(
+          "nc_type", "Operation Type:",
+          choices = c(
+            "Two-Column Math"         = "math2",
+            "Single-Column Transform" = "transform",
+            "Boolean Rules"           = "boolean"
+          ),
+          selected = "math2"
+        ),
+        hr(),
+        conditionalPanel("input.nc_type == 'math2'",    uiOutput("nc_ui_math2")),
+        conditionalPanel("input.nc_type == 'transform'", uiOutput("nc_ui_transform")),
+        conditionalPanel("input.nc_type == 'boolean'",   uiOutput("nc_ui_boolean")),
+        hr(),
+        textInput("nc_name", "New Column Name:", placeholder = "e.g. log_RT"),
+        actionButton("nc_add", "Add Column", class = "btn-primary"),
+        hr(),
+        h4("Created Columns"),
+        uiOutput("nc_list")
+      ),
+      mainPanel(
+        width = 8,
+        h4("Data Preview with New Columns (first 10 rows)"),
+        div(style = "overflow-x: auto;",
+            tableOutput("nc_preview"))
+      )
+    )
+  ),
+
+  # ── Tab 3 : Column Assignment ─────────────────────────────────────────────
+  tabPanel(
+    "3. Columns",
     sidebarLayout(
       sidebarPanel(
         width = 4,
@@ -64,9 +186,9 @@ ui <- navbarPage(
     )
   ),
 
-  # ── Tab 3 : Outlier Removal ───────────────────────────────────────────────
+  # ── Tab 4 : Outlier Removal ───────────────────────────────────────────────
   tabPanel(
-    "3. Outliers",
+    "4. Outliers",
     fluidRow(
       column(12,
         p("For each dependent variable you can apply hard limits, SD-based removal,
@@ -80,9 +202,9 @@ ui <- navbarPage(
         tableOutput("outlier_preview"))
   ),
 
-  # ── Tab 4 : Aggregate & Output ────────────────────────────────────────────
+  # ── Tab 5 : Aggregate & Output ────────────────────────────────────────────
   tabPanel(
-    "4. Output",
+    "5. Output",
     sidebarLayout(
       sidebarPanel(
         width = 3,
@@ -144,23 +266,221 @@ server <- function(input, output, session) {
     head(raw_data(), 10)
   })
 
+  # ── Column definitions & derived data ────────────────────────────────────
+  col_defs     <- reactiveVal(list())
+  n_bool_rules <- reactiveVal(1)
+
+  derived_data <- reactive({
+    req(raw_data())
+    df <- raw_data()
+    for (def in col_defs()) {
+      tryCatch(
+        { df[[def$name]] <- compute_column(df, def) },
+        error = function(e) NULL
+      )
+    }
+    df
+  })
+
+  # ── New Columns tab: operation-specific UIs ───────────────────────────────
+  output$nc_ui_math2 <- renderUI({
+    req(derived_data())
+    cols <- names(derived_data())
+    tagList(
+      selectInput("nc_math2_col1", "Column 1:", choices = cols),
+      selectInput("nc_math2_op", "Operation:",
+                  choices = c("Add (+)"        = "+",
+                              "Subtract (-)"   = "-",
+                              "Multiply (\u00d7)" = "*",
+                              "Divide (\u00f7)"   = "/")),
+      selectInput("nc_math2_col2", "Column 2:", choices = cols)
+    )
+  })
+
+  output$nc_ui_transform <- renderUI({
+    req(derived_data())
+    cols <- names(derived_data())
+    tagList(
+      selectInput("nc_tr_col", "Column:", choices = cols),
+      selectInput("nc_tr_type", "Transform:",
+                  choices = c(
+                    "Natural Log (ln)"   = "log_nat",
+                    "Log base 10"        = "log10",
+                    "Log base 2"         = "log2",
+                    "Log (custom base)"  = "log_b",
+                    "Square Root"        = "sqrt",
+                    "Exponential (e^x)"  = "exp",
+                    "Power (x^n)"        = "power",
+                    "Square (x\u00b2)"   = "square",
+                    "Negate (-x)"        = "negate",
+                    "Absolute Value |x|" = "abs"
+                  )),
+      conditionalPanel(
+        "input.nc_tr_type == 'log_b'",
+        numericInput("nc_tr_param_logb", "Log Base:", value = 10, min = 1)
+      ),
+      conditionalPanel(
+        "input.nc_tr_type == 'power'",
+        numericInput("nc_tr_param_power", "Exponent:", value = 2)
+      )
+    )
+  })
+
+  output$nc_ui_boolean <- renderUI({
+    req(derived_data())
+    cols <- names(derived_data())
+    if (length(cols) == 0) return(p("No columns available."))
+    n    <- n_bool_rules()
+    ops  <- c("==", "!=", "<", "<=", ">", ">=")
+
+    rule_panels <- lapply(seq_len(n), function(i) {
+      wellPanel(
+        tags$b(paste("Rule", i, ":")),
+        p(tags$small("IF the condition below is met, assign the value at the bottom.")),
+        fluidRow(
+          column(4, selectInput(paste0("br_col1_", i), "Column:", choices = cols,
+                                selected = isolate(input[[paste0("br_col1_", i)]]) %||% cols[1])),
+          column(4, selectInput(paste0("br_op1_", i), "Operator:", choices = ops,
+                                selected = isolate(input[[paste0("br_op1_", i)]]) %||% "==")),
+          column(4, textInput(paste0("br_val1_", i), "Value:",
+                              value = isolate(input[[paste0("br_val1_", i)]]) %||% ""))
+        ),
+        selectInput(paste0("br_logic_", i), "Additional condition:",
+                    choices  = c("None" = "none", "AND" = "and", "OR" = "or"),
+                    selected = isolate(input[[paste0("br_logic_", i)]]) %||% "none"),
+        conditionalPanel(
+          condition = sprintf("input['br_logic_%d'] != 'none'", i),
+          fluidRow(
+            column(4, selectInput(paste0("br_col2_", i), "Column:", choices = cols,
+                                  selected = isolate(input[[paste0("br_col2_", i)]]) %||% cols[1])),
+            column(4, selectInput(paste0("br_op2_", i), "Operator:", choices = ops,
+                                  selected = isolate(input[[paste0("br_op2_", i)]]) %||% "==")),
+            column(4, textInput(paste0("br_val2_", i), "Value:",
+                                value = isolate(input[[paste0("br_val2_", i)]]) %||% ""))
+          )
+        ),
+        textInput(paste0("br_result_", i), "Then assign value:",
+                  value = isolate(input[[paste0("br_result_", i)]]) %||% "")
+      )
+    })
+
+    tagList(
+      do.call(tagList, rule_panels),
+      actionButton("br_add_rule", "Add Another Rule",
+                   class = "btn-sm btn-default", style = "margin-bottom:10px;"),
+      hr(),
+      textInput("br_default", "Default (else) value:",
+                value = isolate(input$br_default) %||% "NA")
+    )
+  })
+
+  observeEvent(input$br_add_rule, {
+    n_bool_rules(n_bool_rules() + 1)
+  })
+
+  # ── Add column ────────────────────────────────────────────────────────────
+  observeEvent(input$nc_add, {
+    name <- trimws(input$nc_name %||% "")
+    if (!nzchar(name)) return()
+
+    def <- if (input$nc_type == "math2") {
+      list(
+        type = "math2",
+        name = name,
+        col1 = input$nc_math2_col1,
+        op   = input$nc_math2_op,
+        col2 = input$nc_math2_col2
+      )
+    } else if (input$nc_type == "transform") {
+      param <- if (isTRUE(input$nc_tr_type == "log_b"))  input$nc_tr_param_logb
+               else if (isTRUE(input$nc_tr_type == "power")) input$nc_tr_param_power
+               else NA
+      list(
+        type      = "transform",
+        name      = name,
+        col       = input$nc_tr_col,
+        transform = input$nc_tr_type,
+        param     = param
+      )
+    } else {
+      n <- isolate(n_bool_rules())
+      rules <- lapply(seq_len(n), function(i) {
+        list(
+          col1   = input[[paste0("br_col1_", i)]] %||% "",
+          op1    = input[[paste0("br_op1_", i)]]  %||% "==",
+          val1   = input[[paste0("br_val1_", i)]] %||% "",
+          logic  = input[[paste0("br_logic_", i)]] %||% "none",
+          col2   = input[[paste0("br_col2_", i)]] %||% "",
+          op2    = input[[paste0("br_op2_", i)]]  %||% "==",
+          val2   = input[[paste0("br_val2_", i)]] %||% "",
+          result = input[[paste0("br_result_", i)]] %||% ""
+        )
+      })
+      list(
+        type    = "boolean",
+        name    = name,
+        rules   = rules,
+        default = input$br_default %||% "NA"
+      )
+    }
+
+    defs     <- col_defs()
+    existing <- which(vapply(defs, function(d) d$name == name, logical(1)))
+    if (length(existing) > 0) {
+      defs[[existing[1]]] <- def
+    } else {
+      defs <- c(defs, list(def))
+    }
+    col_defs(defs)
+    n_bool_rules(1)
+  })
+
+  # ── Created-columns list with remove ─────────────────────────────────────
+  output$nc_list <- renderUI({
+    defs <- col_defs()
+    if (length(defs) == 0) return(p("No columns created yet."))
+    items <- lapply(defs, function(def) {
+      div(style = "margin-bottom: 4px;",
+          tags$code(def$name), ": ", format_def_label(def))
+    })
+    col_names <- vapply(defs, `[[`, character(1), "name")
+    tagList(
+      do.call(tagList, items),
+      hr(),
+      selectInput("nc_remove_sel", "Remove column:",
+                  choices = c("(select)" = "", col_names), selected = ""),
+      actionButton("nc_remove_btn", "Remove", class = "btn-sm btn-danger")
+    )
+  })
+
+  observeEvent(input$nc_remove_btn, {
+    sel <- input$nc_remove_sel %||% ""
+    if (!nzchar(sel)) return()
+    col_defs(Filter(function(d) d$name != sel, col_defs()))
+  })
+
+  output$nc_preview <- renderTable({
+    req(derived_data())
+    head(derived_data(), 10)
+  })
+
   # ── Column selection UIs ──────────────────────────────────────────────────
   output$ui_participant <- renderUI({
-    req(raw_data())
-    cols <- names(raw_data())
+    req(derived_data())
+    cols <- names(derived_data())
     selectInput("participant_col", "Participant ID Column:",
                 choices = cols, multiple = FALSE)
   })
 
   output$ui_info <- renderUI({
-    req(raw_data())
-    cols <- names(raw_data())
+    req(derived_data())
+    cols <- names(derived_data())
     checkboxGroupInput("info_cols", NULL, choices = cols)
   })
 
   output$ui_ivs <- renderUI({
-    req(raw_data())
-    cols <- names(raw_data())
+    req(derived_data())
+    cols <- names(derived_data())
     choices <- c("(none)" = "", cols)
     tagList(
       selectInput("iv1", "IV 1:", choices = choices, selected = ""),
@@ -171,8 +491,8 @@ server <- function(input, output, session) {
   })
 
   output$ui_dvs <- renderUI({
-    req(raw_data())
-    cols <- names(raw_data())
+    req(derived_data())
+    cols <- names(derived_data())
     choices <- c("(none)" = "", cols)
     tagList(
       selectInput("dv1", "DV 1:", choices = choices, selected = ""),
@@ -194,7 +514,7 @@ server <- function(input, output, session) {
 
   # ── Filtered data ──────────────────────────────────────────────────────────
   filtered_data <- reactive({
-    req(raw_data(), input$participant_col)
+    req(derived_data(), input$participant_col)
 
     part <- input$participant_col
     info <- input$info_cols  # may be NULL
@@ -202,9 +522,9 @@ server <- function(input, output, session) {
     dvs  <- selected_dvs()
 
     keep <- unique(c(part, info, ivs, dvs))
-    keep <- keep[keep %in% names(raw_data())]
+    keep <- keep[keep %in% names(derived_data())]
 
-    df <- raw_data()[, keep, drop = FALSE]
+    df <- derived_data()[, keep, drop = FALSE]
 
     # Remove rows with any missing DV value
     if (length(dvs) > 0) {
