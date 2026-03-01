@@ -107,7 +107,11 @@ ui <- navbarPage(
           "sep", "Column Separator",
           choices  = c(Comma = ",", Semicolon = ";", Tab = "\t"),
           selected = ","
-        )
+        ),
+        hr(),
+        uiOutput("ui_remove_cols"),
+        hr(),
+        uiOutput("ui_rename_cols")
       ),
       mainPanel(
         width = 9,
@@ -261,9 +265,54 @@ server <- function(input, output, session) {
     df
   })
 
-  output$preview <- renderTable({
+  # ── Remove / rename columns (Tab 1 operations) ───────────────────────────
+  output$ui_remove_cols <- renderUI({
     req(raw_data())
-    head(raw_data(), 10)
+    cols <- names(raw_data())
+    tagList(
+      h4("Remove Columns"),
+      checkboxGroupInput("remove_cols", NULL, choices = cols)
+    )
+  })
+
+  output$ui_rename_cols <- renderUI({
+    req(raw_data())
+    all_cols <- names(raw_data())
+    rm_cols  <- input$remove_cols %||% character(0)
+    keep_idx <- which(!(all_cols %in% rm_cols))
+    if (length(keep_idx) == 0)
+      return(tagList(h4("Rename Columns"), p("No columns to rename.")))
+    inputs <- lapply(keep_idx, function(i) {
+      col <- all_cols[i]
+      textInput(
+        paste0("rename_col_", i),
+        col,
+        value = isolate(input[[paste0("rename_col_", i)]]) %||% col
+      )
+    })
+    tagList(h4("Rename Columns"), do.call(tagList, inputs))
+  })
+
+  upload_data <- reactive({
+    req(raw_data())
+    df       <- raw_data()
+    all_cols <- names(df)
+    rm_cols  <- input$remove_cols %||% character(0)
+    if (length(rm_cols) > 0)
+      df <- df[, setdiff(all_cols, rm_cols), drop = FALSE]
+    for (i in seq_along(all_cols)) {
+      col <- all_cols[i]
+      if (col %in% rm_cols) next
+      new_name <- trimws(input[[paste0("rename_col_", i)]] %||% col)
+      if (nzchar(new_name) && new_name != col && !(new_name %in% names(df)))
+        names(df)[names(df) == col] <- new_name
+    }
+    df
+  })
+
+  output$preview <- renderTable({
+    req(upload_data())
+    head(upload_data(), 10)
   })
 
   # ── Column definitions & derived data ────────────────────────────────────
@@ -271,8 +320,8 @@ server <- function(input, output, session) {
   n_bool_rules <- reactiveVal(1)
 
   derived_data <- reactive({
-    req(raw_data())
-    df <- raw_data()
+    req(upload_data())
+    df <- upload_data()
     for (def in col_defs()) {
       tryCatch(
         { df[[def$name]] <- compute_column(df, def) },
