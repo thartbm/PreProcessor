@@ -328,26 +328,21 @@ ui <- navbarPage(
 server <- function(input, output, session) {
 
   # ── Raw data ──────────────────────────────────────────────────────────────
-  raw_data <- reactive({
+  # Individual file data frames (no index column, not yet combined)
+  raw_files <- reactive({
     req(input$file)
     dfs <- lapply(input$file$datapath, function(path) {
       read.csv(path, header = TRUE, sep = input$sep, check.names = FALSE)
     })
     dfs <- Filter(function(d) nrow(d) > 0, dfs)
     req(length(dfs) > 0)
-    if (isTRUE(input$add_index)) {
-      idx_name <- trimws(input$index_col_name %||% "index")
-      if (!nzchar(idx_name)) idx_name <- "index"
-      dfs <- lapply(dfs, function(d) {
-        col_name <- idx_name
-        if (col_name %in% names(d)) {
-          suffix <- 1L
-          while (paste0(col_name, "_", suffix) %in% names(d)) suffix <- suffix + 1L
-          col_name <- paste0(col_name, "_", suffix)
-        }
-        cbind(setNames(data.frame(seq_len(nrow(d))), col_name), d)
-      })
-    }
+    dfs
+  })
+
+  # Combined raw data (no index column) — used for column-removal/rename UI
+  raw_data <- reactive({
+    req(raw_files())
+    dfs      <- raw_files()
     all_cols <- unique(c(names(dfs[[1]]), unlist(lapply(dfs, names))))
     dfs <- lapply(dfs, function(d) {
       missing_cols <- setdiff(all_cols, names(d))
@@ -392,12 +387,42 @@ server <- function(input, output, session) {
   })
 
   upload_data <- reactive({
-    req(raw_data())
-    df       <- raw_data()
-    all_cols <- names(df)
+    req(raw_files())
+    dfs      <- raw_files()
+    all_cols <- names(raw_data())
     rm_cols  <- input$remove_cols %||% character(0)
-    if (length(rm_cols) > 0)
-      df <- df[, setdiff(all_cols, rm_cols), drop = FALSE]
+
+    # Per-file: remove selected columns, then add index before combining
+    dfs <- lapply(dfs, function(d) {
+      d <- d[, setdiff(names(d), rm_cols), drop = FALSE]
+      if (isTRUE(input$add_index)) {
+        idx_name <- trimws(input$index_col_name %||% "index")
+        if (!nzchar(idx_name)) idx_name <- "index"
+        col_name <- idx_name
+        if (col_name %in% names(d)) {
+          suffix <- 1L
+          while (paste0(col_name, "_", suffix) %in% names(d)) suffix <- suffix + 1L
+          col_name <- paste0(col_name, "_", suffix)
+        }
+        d <- cbind(setNames(data.frame(seq_len(nrow(d))), col_name), d)
+      }
+      d
+    })
+
+    # Combine files
+    combined_cols <- unique(c(names(dfs[[1]]), unlist(lapply(dfs, names))))
+    dfs <- lapply(dfs, function(d) {
+      missing_cols <- setdiff(combined_cols, names(d))
+      if (length(missing_cols) > 0) d[missing_cols] <- NA
+      d[combined_cols]
+    })
+    df <- do.call(rbind, dfs)
+    list_cols <- vapply(df, is.list, logical(1))
+    df[list_cols] <- lapply(df[list_cols], function(col) {
+      vapply(col, function(x) if (length(x) == 0) NA_character_ else as.character(x[[1]]), character(1))
+    })
+
+    # Apply renames (keyed by position in raw_data(), which has no index)
     for (i in seq_along(all_cols)) {
       col <- all_cols[i]
       if (col %in% rm_cols) next
