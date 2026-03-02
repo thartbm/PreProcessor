@@ -13,6 +13,7 @@ install.packages("shiny")
 # Run from the repository root
 shiny::runApp("app.R")
 ```
+The app can also be run here: [PreProcessor](https://mthart.shinyapps.io/PreProcessor/)
 
 ## Tabs
 
