@@ -45,6 +45,32 @@ compute_column <- function(df, def) {
       "negate"  = -v,
       "abs"     = abs(v)
     )
+  } else if (def$type == "lagged") {
+    col_vals <- df[[def$col]]
+    n        <- length(col_vals)
+    if (def$op %in% c("diff", "abs_diff", "pct_change")) {
+      v     <- as.numeric(col_vals)
+      first <- suppressWarnings(as.numeric(def$first_val))
+      raw   <- c(NA_real_, diff(v))
+      result <- switch(def$op,
+        diff       = raw,
+        abs_diff   = abs(raw),
+        pct_change = { prev_abs <- abs(c(NA_real_, v[-n])); ifelse(prev_abs == 0, NA_real_, raw / prev_abs * 100) }
+      )
+      result[1] <- if (!is.na(first)) first else NA_real_
+      result
+    } else {  # compare
+      prev_v <- c(NA, col_vals[-n])
+      result <- character(n)
+      result[1] <- def$first_val
+      if (n > 1) {
+        same     <- !is.na(col_vals[-1]) & !is.na(prev_v[-1]) &
+                    as.character(col_vals[-1]) == as.character(prev_v[-1])
+        result[-1] <- ifelse(same, def$same_val, def$diff_val)
+      }
+      num_result <- suppressWarnings(as.numeric(result))
+      if (!anyNA(num_result)) num_result else result
+    }
   } else if (def$type == "boolean") {
     result <- rep(NA_character_, nrow(df))
     for (rule in def$rules) {
@@ -81,6 +107,14 @@ format_def_label <- function(def) {
       abs     = "|x|"
     )
     paste0(tr_name, "(", def$col, ")")
+  } else if (def$type == "lagged") {
+    op_label <- switch(def$op,
+      diff       = "diff",
+      abs_diff   = "abs_diff",
+      pct_change = "pct_change",
+      compare    = "compare"
+    )
+    paste0(op_label, "(", def$col, ")")
   } else if (def$type == "boolean") {
     paste(length(def$rules), "rule(s)")
   }
@@ -134,7 +168,8 @@ ui <- navbarPage(
           choices = c(
             "Two-Column Math"         = "math2",
             "Single-Column Transform" = "transform",
-            "Boolean Rules"           = "boolean"
+            "Boolean Rules"           = "boolean",
+            "Lag / Previous Value"    = "lagged"
           ),
           selected = "math2"
         ),
@@ -142,6 +177,7 @@ ui <- navbarPage(
         conditionalPanel("input.nc_type == 'math2'",    uiOutput("nc_ui_math2")),
         conditionalPanel("input.nc_type == 'transform'", uiOutput("nc_ui_transform")),
         conditionalPanel("input.nc_type == 'boolean'",   uiOutput("nc_ui_boolean")),
+        conditionalPanel("input.nc_type == 'lagged'",    uiOutput("nc_ui_lagged")),
         hr(),
         textInput("nc_name", "New Column Name:", placeholder = "e.g. log_RT"),
         actionButton("nc_add", "Add Column", class = "btn-primary"),
@@ -464,6 +500,51 @@ server <- function(input, output, session) {
     n_bool_rules(n_bool_rules() + 1)
   })
 
+  output$nc_ui_lagged <- renderUI({
+    req(derived_data())
+    cols    <- names(derived_data())
+    df      <- derived_data()
+    sel_col <- input$nc_lag_col %||% cols[1]
+
+    # Only offer numeric ops when the selected column is numeric
+    is_num <- sel_col %in% names(df) && nrow(df) > 0 && {
+      v <- df[[sel_col]]
+      is.numeric(v) || any(!is.na(suppressWarnings(as.numeric(v[!is.na(v)]))))
+    }
+
+    op_choices <- if (is_num) {
+      c(
+        "Difference (current \u2212 previous)"                    = "diff",
+        "Absolute Difference |current \u2212 previous|"           = "abs_diff",
+        "Percent Change (100\u00d7\u0394/|previous|)"             = "pct_change",
+        "Compare (same / different)"                               = "compare"
+      )
+    } else {
+      c("Compare (same / different)" = "compare")
+    }
+
+    tagList(
+      selectInput("nc_lag_col", "Column:", choices = cols, selected = sel_col),
+      selectInput("nc_lag_op", "Operation:", choices = op_choices,
+                  selected = isolate(input$nc_lag_op) %||% names(op_choices)[1]),
+      conditionalPanel(
+        "input.nc_lag_op == 'diff' || input.nc_lag_op == 'abs_diff' || input.nc_lag_op == 'pct_change'",
+        numericInput("nc_lag_first_diff", "First-row fill value:", value = NA)
+      ),
+      conditionalPanel(
+        "input.nc_lag_op == 'compare'",
+        tagList(
+          textInput("nc_lag_same_val", "Value when same:",
+                    value = isolate(input$nc_lag_same_val) %||% "same"),
+          textInput("nc_lag_diff_val", "Value when different:",
+                    value = isolate(input$nc_lag_diff_val) %||% "different"),
+          textInput("nc_lag_first_cmp", "First-row fill value:",
+                    value = isolate(input$nc_lag_first_cmp) %||% "NA")
+        )
+      )
+    )
+  })
+
   # ── Add column ────────────────────────────────────────────────────────────
   observeEvent(input$nc_add, {
     name <- trimws(input$nc_name %||% "")
@@ -487,6 +568,21 @@ server <- function(input, output, session) {
         col       = input$nc_tr_col,
         transform = input$nc_tr_type,
         param     = param
+      )
+    } else if (input$nc_type == "lagged") {
+      lag_op <- input$nc_lag_op %||% "compare"
+      list(
+        type      = "lagged",
+        name      = name,
+        col       = input$nc_lag_col,
+        op        = lag_op,
+        first_val = if (lag_op == "compare") {
+                      input$nc_lag_first_cmp %||% "NA"
+                    } else {
+                      as.character(input$nc_lag_first_diff %||% NA)
+                    },
+        same_val  = input$nc_lag_same_val %||% "same",
+        diff_val  = input$nc_lag_diff_val %||% "different"
       )
     } else {
       n <- isolate(n_bool_rules())
