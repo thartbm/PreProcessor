@@ -4,21 +4,46 @@ library(shiny)
 
 # ── Helper functions for new-column computation ───────────────────────────────
 
-eval_bool_condition <- function(col_vals, op, val) {
-  num_val <- suppressWarnings(as.numeric(val))
-  if (!is.na(num_val)) {
-    col_vals <- suppressWarnings(as.numeric(col_vals))
-    val <- num_val
+eval_bool_condition <- function(col_vals, op, val, col_vals2 = NULL) {
+  if (!is.null(col_vals2)) {
+    num1    <- suppressWarnings(as.numeric(col_vals))
+    num2    <- suppressWarnings(as.numeric(col_vals2))
+    orig_na <- is.na(col_vals) | is.na(col_vals2)
+    # Use numeric comparison only when conversion introduces no new NAs
+    new_na1 <- is.na(num1) & !orig_na
+    new_na2 <- is.na(num2) & !orig_na
+    if (!any(new_na1) && !any(new_na2)) {
+      col_vals  <- num1
+      col_vals2 <- num2
+    } else {
+      col_vals  <- as.character(col_vals)
+      col_vals2 <- as.character(col_vals2)
+    }
+    switch(op,
+      "==" = col_vals == col_vals2,
+      "!=" = col_vals != col_vals2,
+      "<"  = col_vals <  col_vals2,
+      "<=" = col_vals <= col_vals2,
+      ">"  = col_vals >  col_vals2,
+      ">=" = col_vals >= col_vals2,
+      rep(FALSE, length(col_vals))
+    )
+  } else {
+    num_val <- suppressWarnings(as.numeric(val))
+    if (!is.na(num_val)) {
+      col_vals <- suppressWarnings(as.numeric(col_vals))
+      val <- num_val
+    }
+    switch(op,
+      "==" = col_vals == val,
+      "!=" = col_vals != val,
+      "<"  = col_vals <  val,
+      "<=" = col_vals <= val,
+      ">"  = col_vals >  val,
+      ">=" = col_vals >= val,
+      rep(FALSE, length(col_vals))
+    )
   }
-  switch(op,
-    "==" = col_vals == val,
-    "!=" = col_vals != val,
-    "<"  = col_vals <  val,
-    "<=" = col_vals <= val,
-    ">"  = col_vals >  val,
-    ">=" = col_vals >= val,
-    rep(FALSE, length(col_vals))
-  )
 }
 
 compute_column <- function(df, def) {
@@ -75,10 +100,20 @@ compute_column <- function(df, def) {
     result <- rep(NA_character_, nrow(df))
     for (rule in def$rules) {
       if (!(rule$col1 %in% names(df))) next
-      cond <- eval_bool_condition(df[[rule$col1]], rule$op1, rule$val1)
+      cond <- if (!is.null(rule$cmp1_type) && rule$cmp1_type == "column" &&
+                  nzchar(rule$cmp1_col %||% "") && rule$cmp1_col %in% names(df)) {
+        eval_bool_condition(df[[rule$col1]], rule$op1, NULL, df[[rule$cmp1_col]])
+      } else {
+        eval_bool_condition(df[[rule$col1]], rule$op1, rule$val1)
+      }
       if (!is.null(rule$logic) && rule$logic != "none" &&
           nzchar(rule$col2 %||% "") && (rule$col2 %in% names(df))) {
-        cond2 <- eval_bool_condition(df[[rule$col2]], rule$op2, rule$val2)
+        cond2 <- if (!is.null(rule$cmp2_type) && rule$cmp2_type == "column" &&
+                     nzchar(rule$cmp2_col %||% "") && rule$cmp2_col %in% names(df)) {
+          eval_bool_condition(df[[rule$col2]], rule$op2, NULL, df[[rule$cmp2_col]])
+        } else {
+          eval_bool_condition(df[[rule$col2]], rule$op2, rule$val2)
+        }
         cond  <- if (rule$logic == "and") cond & cond2 else cond | cond2
       }
       mask <- is.na(result) & !is.na(cond) & cond
@@ -464,8 +499,22 @@ server <- function(input, output, session) {
                                 selected = isolate(input[[paste0("br_col1_", i)]]) %||% cols[1])),
           column(4, selectInput(paste0("br_op1_", i), "Operator:", choices = ops,
                                 selected = isolate(input[[paste0("br_op1_", i)]]) %||% "==")),
-          column(4, textInput(paste0("br_val1_", i), "Value:",
-                              value = isolate(input[[paste0("br_val1_", i)]]) %||% ""))
+          column(4,
+            radioButtons(paste0("br_cmp1_type_", i), "Compare to:",
+                         choices  = c("Value" = "value", "Column" = "column"),
+                         selected = isolate(input[[paste0("br_cmp1_type_", i)]]) %||% "value",
+                         inline   = TRUE),
+            conditionalPanel(
+              condition = sprintf("input['br_cmp1_type_%d'] === 'value'", i),
+              textInput(paste0("br_val1_", i), "Value:",
+                        value = isolate(input[[paste0("br_val1_", i)]]) %||% "")
+            ),
+            conditionalPanel(
+              condition = sprintf("input['br_cmp1_type_%d'] === 'column'", i),
+              selectInput(paste0("br_cmp1_col_", i), "Column:", choices = cols,
+                          selected = isolate(input[[paste0("br_cmp1_col_", i)]]) %||% cols[1])
+            )
+          )
         ),
         selectInput(paste0("br_logic_", i), "Additional condition:",
                     choices  = c("None" = "none", "AND" = "and", "OR" = "or"),
@@ -477,8 +526,22 @@ server <- function(input, output, session) {
                                   selected = isolate(input[[paste0("br_col2_", i)]]) %||% cols[1])),
             column(4, selectInput(paste0("br_op2_", i), "Operator:", choices = ops,
                                   selected = isolate(input[[paste0("br_op2_", i)]]) %||% "==")),
-            column(4, textInput(paste0("br_val2_", i), "Value:",
-                                value = isolate(input[[paste0("br_val2_", i)]]) %||% ""))
+            column(4,
+              radioButtons(paste0("br_cmp2_type_", i), "Compare to:",
+                           choices  = c("Value" = "value", "Column" = "column"),
+                           selected = isolate(input[[paste0("br_cmp2_type_", i)]]) %||% "value",
+                           inline   = TRUE),
+              conditionalPanel(
+                condition = sprintf("input['br_cmp2_type_%d'] === 'value'", i),
+                textInput(paste0("br_val2_", i), "Value:",
+                          value = isolate(input[[paste0("br_val2_", i)]]) %||% "")
+              ),
+              conditionalPanel(
+                condition = sprintf("input['br_cmp2_type_%d'] === 'column'", i),
+                selectInput(paste0("br_cmp2_col_", i), "Column:", choices = cols,
+                            selected = isolate(input[[paste0("br_cmp2_col_", i)]]) %||% cols[1])
+              )
+            )
           )
         ),
         textInput(paste0("br_result_", i), "Then assign value:",
@@ -588,14 +651,18 @@ server <- function(input, output, session) {
       n <- isolate(n_bool_rules())
       rules <- lapply(seq_len(n), function(i) {
         list(
-          col1   = input[[paste0("br_col1_", i)]] %||% "",
-          op1    = input[[paste0("br_op1_", i)]]  %||% "==",
-          val1   = input[[paste0("br_val1_", i)]] %||% "",
-          logic  = input[[paste0("br_logic_", i)]] %||% "none",
-          col2   = input[[paste0("br_col2_", i)]] %||% "",
-          op2    = input[[paste0("br_op2_", i)]]  %||% "==",
-          val2   = input[[paste0("br_val2_", i)]] %||% "",
-          result = input[[paste0("br_result_", i)]] %||% ""
+          col1      = input[[paste0("br_col1_", i)]]      %||% "",
+          op1       = input[[paste0("br_op1_", i)]]       %||% "==",
+          cmp1_type = input[[paste0("br_cmp1_type_", i)]] %||% "value",
+          val1      = input[[paste0("br_val1_", i)]]      %||% "",
+          cmp1_col  = input[[paste0("br_cmp1_col_", i)]]  %||% "",
+          logic     = input[[paste0("br_logic_", i)]]     %||% "none",
+          col2      = input[[paste0("br_col2_", i)]]      %||% "",
+          op2       = input[[paste0("br_op2_", i)]]       %||% "==",
+          cmp2_type = input[[paste0("br_cmp2_type_", i)]] %||% "value",
+          val2      = input[[paste0("br_val2_", i)]]      %||% "",
+          cmp2_col  = input[[paste0("br_cmp2_col_", i)]]  %||% "",
+          result    = input[[paste0("br_result_", i)]]    %||% ""
         )
       })
       list(
