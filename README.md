@@ -32,6 +32,8 @@ Load one or more CSV files and tidy up column names before any further processin
   - *Comma* (`,`, default)
   - *Semicolon* (`;`)
   - *Tab* (`\t`)
+- **Add index column** – tick this checkbox to prepend a sequential row-index column (1, 2, 3, …) to each file *before* they are combined. This is useful for tracking the original row order within each file after merging.
+  - **Index Column Name** – the name to give the index column (default: `index`). If the name already exists in the file a numeric suffix is added automatically (e.g. `index_1`).
 - **Remove Columns** – tick any columns that should be dropped from the dataset entirely.
 - **Rename Columns** – type a new name for any column you want to rename. The text box for each column is pre-filled with the original name; leave it unchanged to keep the original name.
 
@@ -50,6 +52,18 @@ Derive additional columns from the existing data. Any columns created here are a
 | **Two-Column Math** | Combine two existing columns with `+`, `-`, `×`, or `÷`. |
 | **Single-Column Transform** | Apply a mathematical function to one column: natural log (`ln`), `log10`, `log2`, log to a custom base, square root, `exp` (eˣ), power (`xⁿ`, custom exponent), square (`x²`), negate (`-x`), or absolute value (`|x|`). |
 | **Boolean Rules** | Assign a value based on one or more if/then conditions. Each rule checks whether a column satisfies a comparison (`==`, `!=`, `<`, `<=`, `>`, `>=`) and optionally chains a second condition with **AND** or **OR**. Rules are evaluated in order; the first matching rule wins. Rows that do not match any rule receive the **Default (else) value**. |
+| **Lag / Previous Value** | Create a column that compares or computes the difference between each row and the *previous* row in a chosen column. See the operations table below. |
+
+**Lag / Previous Value operations:**
+
+| Operation | Description |
+|-----------|-------------|
+| **Compare** | Checks whether the current value equals the previous row's value. Assign a custom **Value when same** and **Value when different** (default: `"same"` / `"different"`). |
+| **Difference (current − previous)** | Numeric difference between the current and previous row's value. |
+| **Absolute Difference \|current − previous\|** | Absolute value of the numeric difference. |
+| **Percent Change (100×Δ/\|previous\|)** | Percentage change relative to the absolute value of the previous row (`NA` when the previous value is zero). |
+
+For all lag operations the **First-row fill value** controls what is placed in the first row (which has no previous row to compare against). For numeric operations the default is `NA`; for **Compare** the default is `"NA"` (stored as a string).
 
 **Workflow for adding a column:**
 1. Select an operation type.
