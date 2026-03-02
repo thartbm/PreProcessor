@@ -1047,14 +1047,18 @@ server <- function(input, output, session) {
       function(x) median(x, na.rm = TRUE)
     }
 
-    lhs <- if (length(dvs) == 1) dvs else paste0("cbind(", paste(dvs, collapse = ", "), ")")
     rhs <- paste(group_cols, collapse = " + ")
-    agg_formula <- as.formula(paste(lhs, "~", rhs))
 
-    # na.action = na.pass keeps rows whose grouping variables are complete
-    # while allowing DV columns to contain NAs introduced by outlier removal;
-    # those NAs are handled by na.rm = TRUE inside fun.
-    result <- aggregate(agg_formula, data = df, FUN = fun, na.action = na.pass)
+    # Aggregate each DV separately and merge, so each DV ends up in its own column.
+    agg_list <- lapply(dvs, function(dv) {
+      agg_formula <- as.formula(paste(dv, "~", rhs))
+      # na.action = na.pass keeps rows whose grouping variables are complete
+      # while allowing DV columns to contain NAs introduced by outlier removal;
+      # those NAs are handled by na.rm = TRUE inside fun.
+      aggregate(agg_formula, data = df, FUN = fun, na.action = na.pass)
+    })
+
+    result <- Reduce(function(a, b) merge(a, b, by = group_cols, all = FALSE), agg_list)
     result
   })
 
@@ -1069,20 +1073,8 @@ server <- function(input, output, session) {
     pinfo <- participant_info()
 
     if (input$output_format == "long") {
-      id_cols <- setdiff(names(df), dvs)
-
-      long_df <- reshape(
-        df,
-        varying   = dvs,
-        v.names   = "value",
-        timevar   = "variable",
-        times     = dvs,
-        direction = "long"
-      )
-      # reshape adds an "id" column we don't need
-      long_df$id   <- NULL
-      rownames(long_df) <- NULL
-      long_df <- long_df[, c(id_cols, "variable", "value")]
+      # Each DV is already in its own column; return the aggregated data directly.
+      long_df <- df
 
       # Attach participant info (left-join: keep all rows with valid DV data)
       if (!is.null(pinfo)) {
