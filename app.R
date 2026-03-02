@@ -178,6 +178,12 @@ ui <- navbarPage(
           selected = ","
         ),
         hr(),
+        checkboxInput("add_index", "Add index column", value = FALSE),
+        conditionalPanel(
+          "input.add_index",
+          textInput("index_col_name", "Index Column Name:", value = "index")
+        ),
+        hr(),
         uiOutput("ui_remove_cols"),
         hr(),
         uiOutput("ui_rename_cols")
@@ -329,6 +335,19 @@ server <- function(input, output, session) {
     })
     dfs <- Filter(function(d) nrow(d) > 0, dfs)
     req(length(dfs) > 0)
+    if (isTRUE(input$add_index)) {
+      idx_name <- trimws(input$index_col_name %||% "index")
+      if (!nzchar(idx_name)) idx_name <- "index"
+      dfs <- lapply(dfs, function(d) {
+        col_name <- idx_name
+        if (col_name %in% names(d)) {
+          suffix <- 1L
+          while (paste0(col_name, "_", suffix) %in% names(d)) suffix <- suffix + 1L
+          col_name <- paste0(col_name, "_", suffix)
+        }
+        cbind(setNames(data.frame(seq_len(nrow(d))), col_name), d)
+      })
+    }
     all_cols <- unique(c(names(dfs[[1]]), unlist(lapply(dfs, names))))
     dfs <- lapply(dfs, function(d) {
       missing_cols <- setdiff(all_cols, names(d))
