@@ -162,11 +162,11 @@ dprime <- function(hits, misses, fas, crs, hautus = FALSE) {
   if (hautus) {
     hit_rate    <- (hits + 0.5) / (hits + misses + 1)
     fa_rate     <- (fas  + 0.5) / (fas  + crs    + 1)
-    specificity <- (crs  + 0.5) / (crs  + misses + 1)
+    specificity <- (crs  + 0.5) / (crs  + fas    + 1)
   } else {
     hit_rate    <- hits / (hits + misses)
     fa_rate     <- fas  / (fas  + crs)
-    specificity <- crs  / (crs  + misses)
+    specificity <- crs  / (crs  + fas)
   }
   Zhr   <- qnorm(hit_rate)
   Zfr   <- qnorm(fa_rate)
