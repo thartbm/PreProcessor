@@ -286,7 +286,7 @@ ui <- navbarPage(
       )
     ),
     hr(),
-    h4("Data after Outlier Removal (first 10 rows)"),
+    h4("Data after Row Removal (first 10 rows)"),
     div(style = "overflow-x: auto;",
         tableOutput("outlier_preview"))
   ),
@@ -1034,8 +1034,8 @@ server <- function(input, output, session) {
   })
 
   output$outlier_preview <- renderTable({
-    req(clean_data())
-    head(clean_data(), 10)
+    req(row_filtered_data())
+    head(row_filtered_data(), 10)
   })
 
   # ── Tab 5 aggregation UI ─────────────────────────────────────────────────
