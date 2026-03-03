@@ -155,6 +155,38 @@ format_def_label <- function(def) {
   }
 }
 
+# ── Signal-detection helpers ─────────────────────────────────────────────────
+# Returns d-prime and related criteria from raw hit/miss/FA/CR counts.
+# With hautus = TRUE the Hautus (1995) log-linear correction is applied.
+dprime <- function(hits, misses, fas, crs, hautus = FALSE) {
+  if (hautus) {
+    hit_rate    <- (hits + 0.5) / (hits + misses + 1)
+    fa_rate     <- (fas  + 0.5) / (fas  + crs    + 1)
+    specificity <- (crs  + 0.5) / (crs  + misses + 1)
+  } else {
+    hit_rate    <- hits / (hits + misses)
+    fa_rate     <- fas  / (fas  + crs)
+    specificity <- crs  / (crs  + misses)
+  }
+  Zhr   <- qnorm(hit_rate)
+  Zfr   <- qnorm(fa_rate)
+  dp    <- Zhr - Zfr
+  beta  <- exp(-Zhr * Zhr / 2 + Zfr * Zfr / 2)
+  c_val <- -(Zhr + Zfr) / 2
+  list(dprime      = dp,
+       beta        = beta,
+       c           = c_val,
+       sensitivity = hit_rate,
+       specificity = specificity)
+}
+
+# Cowan's K: capacity estimate from hit/CR rates scaled by set size N.
+cowan_k <- function(hits, misses, fas, crs, N) {
+  hit_rate <- hits / (hits + misses)
+  cr_rate  <- crs  / (crs  + fas)
+  (hit_rate + cr_rate - 1) * N
+}
+
 # ── UI ──────────────────────────────────────────────────────────────────────
 
 ui <- navbarPage(
@@ -297,12 +329,7 @@ ui <- navbarPage(
     sidebarLayout(
       sidebarPanel(
         width = 3,
-        h4("Aggregation"),
-        radioButtons(
-          "agg_func", "Summary Function",
-          choices  = c(Mean = "mean", Median = "median"),
-          selected = "mean"
-        ),
+        uiOutput("agg_ui"),
         hr(),
         h4("Output Format"),
         radioButtons(
@@ -999,6 +1026,68 @@ server <- function(input, output, session) {
     head(clean_data(), 10)
   })
 
+  # ── Tab 5 aggregation UI ─────────────────────────────────────────────────
+  output$agg_ui <- renderUI({
+    dvs <- selected_dvs()
+    if (length(dvs) == 0) {
+      return(tagList(
+        h4("Aggregation"),
+        p(em("Select at least one dependent variable in the Variables tab."))
+      ))
+    }
+    dp_choices <- c("(none)" = "", dvs)
+    tagList(
+      h4("Aggregation"),
+      selectInput("dvs_mean",   "DVs \u2192 Mean:",
+                  choices = dvs, multiple = TRUE, selected = dvs),
+      selectInput("dvs_median", "DVs \u2192 Median:",
+                  choices = dvs, multiple = TRUE, selected = NULL),
+      hr(),
+      h4("D-prime Pairs"),
+      checkboxInput("dp_hautus", "Hautus correction", value = FALSE),
+      p(em("Select pairs of binary (0/1 or FALSE/TRUE) DVs.")),
+      lapply(1:3, function(i) {
+        tagList(
+          strong(paste("Pair", i, ":")),
+          selectInput(paste0("dp_target_",   i), "Target present:",
+                      choices = dp_choices, selected = ""),
+          selectInput(paste0("dp_response_", i), "Response:",
+                      choices = dp_choices, selected = ""),
+          numericInput(paste0("dp_n_", i),
+                       "N for Cowan\u2019s K (0 = skip):",
+                       value = 0, min = 0, step = 1)
+        )
+      })
+    )
+  })
+
+  # ── Mutual exclusivity: mean \u2192 median \u2192 d-prime (cascade) ──────────────────────
+  # When mean selection changes, restrict median choices to unselected DVs.
+  observeEvent(input$dvs_mean, {
+    dvs      <- isolate(selected_dvs())
+    mean_sel <- input$dvs_mean %||% character(0)
+    avail    <- setdiff(dvs, mean_sel)
+    new_med  <- intersect(isolate(input$dvs_median) %||% character(0), avail)
+    updateSelectInput(session, "dvs_median", choices = avail, selected = new_med)
+  }, ignoreNULL = FALSE, ignoreInit = FALSE)
+
+  # When median selection changes, restrict d-prime choices accordingly.
+  observeEvent(input$dvs_median, {
+    dvs        <- isolate(selected_dvs())
+    mean_sel   <- isolate(input$dvs_mean)   %||% character(0)
+    median_sel <- input$dvs_median %||% character(0)
+    avail_dp   <- setdiff(dvs, c(mean_sel, median_sel))
+    dp_choices <- c("(none)" = "", avail_dp)
+    for (i in 1:3) {
+      for (sfx in c("target", "response")) {
+        id  <- paste0("dp_", sfx, "_", i)
+        cur <- isolate(input[[id]]) %||% ""
+        updateSelectInput(session, id, choices = dp_choices,
+                          selected = if (nzchar(cur) && cur %in% avail_dp) cur else "")
+      }
+    }
+  }, ignoreNULL = FALSE, ignoreInit = FALSE)
+
   # ── Participant-level descriptives ────────────────────────────────────────
   participant_info <- reactive({
     req(clean_data(), input$participant_col)
@@ -1032,7 +1121,7 @@ server <- function(input, output, session) {
 
   # ── Aggregation ───────────────────────────────────────────────────────────
   agg_data <- reactive({
-    req(clean_data(), input$participant_col, input$agg_func)
+    req(clean_data(), input$participant_col)
 
     dvs  <- selected_dvs()
     ivs  <- selected_ivs()
@@ -1040,26 +1129,98 @@ server <- function(input, output, session) {
 
     if (length(dvs) == 0) return(NULL)
 
-    df          <- clean_data()
-    group_cols  <- unique(c(part, ivs))
-    group_cols  <- group_cols[group_cols %in% names(df)]
+    df         <- clean_data()
+    group_cols <- unique(c(part, ivs))
+    group_cols <- group_cols[group_cols %in% names(df)]
+    rhs        <- paste(group_cols, collapse = " + ")
 
-    fun <- if (input$agg_func == "mean") {
-      function(x) mean(x, na.rm = TRUE)
-    } else {
-      function(x) median(x, na.rm = TRUE)
+    # ── Per-DV function assignments ─────────────────────────────────────────
+    # Collect d-prime pairs first (they take priority over mean/median).
+    dp_pairs <- Filter(Negate(is.null), lapply(1:3, function(i) {
+      tgt <- input[[paste0("dp_target_",   i)]] %||% ""
+      rsp <- input[[paste0("dp_response_", i)]] %||% ""
+      if (nzchar(tgt) && nzchar(rsp) && tgt %in% names(df) && rsp %in% names(df))
+        list(target = tgt, response = rsp)
+      else
+        NULL
+    }))
+    dp_dvs <- unique(unlist(lapply(dp_pairs, function(p) c(p$target, p$response))))
+
+    # Mean/median lists; DVs assigned to d-prime are excluded.
+    dvs_mean   <- setdiff(input$dvs_mean   %||% dvs,          dp_dvs)
+    dvs_median <- setdiff(input$dvs_median %||% character(0), c(dp_dvs, dvs_mean))
+
+    # ── Aggregate mean DVs ──────────────────────────────────────────────────
+    agg_list <- lapply(dvs_mean, function(dv) {
+      aggregate(as.formula(paste(dv, "~", rhs)), data = df,
+                FUN = function(x) mean(x, na.rm = TRUE), na.action = na.pass)
+    })
+
+    # ── Aggregate median DVs ────────────────────────────────────────────────
+    agg_list <- c(agg_list, lapply(dvs_median, function(dv) {
+      aggregate(as.formula(paste(dv, "~", rhs)), data = df,
+                FUN = function(x) median(x, na.rm = TRUE), na.action = na.pass)
+    }))
+
+    # ── Compute d-prime for each pair ───────────────────────────────────────
+    if (length(dp_pairs) > 0) {
+      hautus <- isTRUE(input$dp_hautus)
+
+      # Build a group-key helper that works for one or many group columns.
+      make_key <- function(d) {
+        if (length(group_cols) == 1) as.character(d[[group_cols]])
+        else apply(d[, group_cols, drop = FALSE], 1, paste, collapse = "\001")
+      }
+
+      groups_df           <- unique(df[, group_cols, drop = FALSE])
+      rownames(groups_df) <- NULL
+      group_key_all       <- make_key(df)
+      group_key_grp       <- make_key(groups_df)
+
+      for (pair_idx in seq_along(dp_pairs)) {
+        pair   <- dp_pairs[[pair_idx]]
+        prefix <- paste0(pair$target, "__", pair$response)
+
+        # Compute signal-detection counts per group then derive statistics.
+        dp_rows <- lapply(group_key_grp, function(k) {
+          idx   <- group_key_all == k
+          tgt_n <- suppressWarnings(as.numeric(df[[pair$target]][idx]))
+          rsp_n <- suppressWarnings(as.numeric(df[[pair$response]][idx]))
+          vld   <- !is.na(tgt_n) & !is.na(rsp_n)
+          tgt_n <- tgt_n[vld]; rsp_n <- rsp_n[vld]
+          h  <- sum(tgt_n == 1 & rsp_n == 1)
+          m  <- sum(tgt_n == 1 & rsp_n == 0)
+          fa <- sum(tgt_n == 0 & rsp_n == 1)
+          cr <- sum(tgt_n == 0 & rsp_n == 0)
+          na_row <- list(dprime = NA_real_, beta = NA_real_, c = NA_real_,
+                         sensitivity = NA_real_, specificity = NA_real_,
+                         h = h, m = m, fa = fa, cr = cr)
+          if ((h + m) == 0 || (fa + cr) == 0) return(na_row)
+          dp_res <- dprime(h, m, fa, cr, hautus)
+          c(dp_res, list(h = h, m = m, fa = fa, cr = cr))
+        })
+
+        dp_df <- groups_df
+        for (stat in c("dprime", "beta", "c", "sensitivity", "specificity")) {
+          dp_df[[paste0(stat, "__", prefix)]] <-
+            sapply(dp_rows, function(r) r[[stat]])
+        }
+
+        # Cowan's K if a positive N is supplied for this pair.
+        n_val <- input[[paste0("dp_n_", pair_idx)]]
+        if (!is.null(n_val) && !is.na(n_val) && n_val > 0) {
+          dp_df[[paste0("cowank__", prefix)]] <- sapply(dp_rows, function(r) {
+            if ((r$h + r$m) == 0 || (r$fa + r$cr) == 0) return(NA_real_)
+            cowan_k(r$h, r$m, r$fa, r$cr, n_val)
+          })
+        }
+
+        rownames(dp_df) <- NULL
+        agg_list <- c(agg_list, list(dp_df))
+      }
     }
 
-    rhs <- paste(group_cols, collapse = " + ")
-
-    # Aggregate each DV separately and merge, so each DV ends up in its own column.
-    agg_list <- lapply(dvs, function(dv) {
-      agg_formula <- as.formula(paste(dv, "~", rhs))
-      # na.action = na.pass keeps rows whose grouping variables are complete
-      # while allowing DV columns to contain NAs introduced by outlier removal;
-      # those NAs are handled by na.rm = TRUE inside fun.
-      aggregate(agg_formula, data = df, FUN = fun, na.action = na.pass)
-    })
+    if (length(agg_list) == 0) return(NULL)
 
     result <- Reduce(function(a, b) merge(a, b, by = group_cols, all = FALSE), agg_list)
     result
@@ -1069,14 +1230,16 @@ server <- function(input, output, session) {
   output_data <- reactive({
     req(agg_data(), input$output_format)
 
-    df   <- agg_data()
-    dvs  <- selected_dvs()
-    ivs  <- selected_ivs()
-    part <- input$participant_col
+    df    <- agg_data()
+    ivs   <- selected_ivs()
+    part  <- input$participant_col
     pinfo <- participant_info()
 
+    # All value columns = every column that is not a grouping column.
+    val_cols <- setdiff(names(df), unique(c(part, ivs)))
+
     if (input$output_format == "long") {
-      # Each DV is already in its own column; return the aggregated data directly.
+      # Each value is already in its own column; return the aggregated data directly.
       long_df <- df
 
       # Attach participant info (left-join: keep all rows with valid DV data)
@@ -1088,7 +1251,7 @@ server <- function(input, output, session) {
       # Wide format: one row per participant
       if (length(ivs) == 0) {
         # No IVs: aggregate already produced one row per participant
-        wide_df <- df[, c(part, dvs), drop = FALSE]
+        wide_df <- df[, c(part, val_cols), drop = FALSE]
       } else {
         # Build IV combination key for each row
         iv_vals <- df[, ivs, drop = FALSE]
@@ -1103,8 +1266,8 @@ server <- function(input, output, session) {
         wide_df <- data.frame(setNames(list(participants), part),
                               stringsAsFactors = FALSE)
 
-        # Add one column per DV per IV combination
-        for (dv in dvs) {
+        # Add one column per value column per IV combination
+        for (dv in val_cols) {
           for (key in unique_keys) {
             col_name <- paste(dv, key, sep = "__")
             vals <- sapply(participants, function(p) {
