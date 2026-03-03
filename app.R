@@ -210,6 +210,12 @@ ui <- navbarPage(
           selected = ","
         ),
         hr(),
+        textInput(
+          "na_strings", "Treat as NA (comma-separated):",
+          placeholder = "e.g. NaN, N/A, missing",
+          value = "NaN"
+        ),
+        hr(),
         checkboxInput("add_index", "Add index column", value = FALSE),
         conditionalPanel(
           "input.add_index",
@@ -432,9 +438,8 @@ server <- function(input, output, session) {
     all_cols  <- names(raw_data())
     keep_cols <- input$keep_cols %||% all_cols
 
-    # Per-file: keep only selected columns, then add index before combining
+    # Per-file: add index before combining
     dfs <- lapply(dfs, function(d) {
-      d <- d[, keep_cols[keep_cols %in% names(d)], drop = FALSE]
       if (isTRUE(input$add_index)) {
         idx_name <- trimws(input$index_col_name %||% "index")
         if (!nzchar(idx_name)) idx_name <- "index"
@@ -461,6 +466,29 @@ server <- function(input, output, session) {
     df[list_cols] <- lapply(df[list_cols], function(col) {
       vapply(col, function(x) if (length(x) == 0) NA_character_ else as.character(x[[1]]), character(1))
     })
+
+    # Replace user-specified NA strings with NA
+    na_vals <- trimws(strsplit(input$na_strings %||% "", ",")[[1]])
+    na_vals <- na_vals[nzchar(na_vals)]
+    if (length(na_vals) > 0) {
+      df[] <- lapply(df, function(col) {
+        col[as.character(col) %in% na_vals] <- NA
+        col
+      })
+    }
+
+    # Convert columns to numeric where now possible
+    df[] <- lapply(df, function(col) {
+      if (is.numeric(col)) return(col)
+      num_col <- suppressWarnings(as.numeric(as.character(col)))
+      new_nas <- is.na(num_col) & !is.na(col)
+      if (!any(new_nas)) num_col else col
+    })
+
+    # Apply column selection (index cols are always kept)
+    idx_cols <- setdiff(names(df), all_cols)
+    sel_cols <- c(idx_cols, keep_cols[keep_cols %in% names(df)])
+    df <- df[, sel_cols, drop = FALSE]
 
     # Apply renames (keyed by position in raw_data(), which has no index)
     for (i in which(all_cols %in% keep_cols)) {
