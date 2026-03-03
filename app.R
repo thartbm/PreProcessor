@@ -267,9 +267,33 @@ ui <- navbarPage(
     )
   ),
 
-  # ── Tab 3 : Column Assignment ─────────────────────────────────────────────
+  # ── Tab 3 : Trial Removal ─────────────────────────────────────────────────
   tabPanel(
-    "3. Variables",
+    "3. Trial Removal",
+    fluidRow(
+      column(12,
+        h4("Row Removal Rules"),
+        p("Remove rows where a column meets a condition (e.g. catch trials or incorrect responses)."),
+        uiOutput("rr_ui"),
+        hr()
+      )
+    ),
+    fluidRow(
+      column(12,
+        p("For each dependent variable you can apply hard limits, SD-based removal,
+          both (hard limits are applied first), or no removal at all."),
+        uiOutput("outlier_ui")
+      )
+    ),
+    hr(),
+    h4("Data after Outlier Removal (first 10 rows)"),
+    div(style = "overflow-x: auto;",
+        tableOutput("outlier_preview"))
+  ),
+
+  # ── Tab 4 : Column Assignment ─────────────────────────────────────────────
+  tabPanel(
+    "4. Variables",
     sidebarLayout(
       sidebarPanel(
         width = 4,
@@ -299,31 +323,7 @@ ui <- navbarPage(
     )
   ),
 
-  # ── Tab 4 : Outlier Removal ───────────────────────────────────────────────
-  tabPanel(
-    "4. Outliers",
-    fluidRow(
-      column(12,
-        h4("Row Removal Rules"),
-        p("Remove rows where a column meets a condition (e.g. catch trials or incorrect responses)."),
-        uiOutput("rr_ui"),
-        hr()
-      )
-    ),
-    fluidRow(
-      column(12,
-        p("For each dependent variable you can apply hard limits, SD-based removal,
-          both (hard limits are applied first), or no removal at all."),
-        uiOutput("outlier_ui")
-      )
-    ),
-    hr(),
-    h4("Data after Outlier Removal (first 10 rows)"),
-    div(style = "overflow-x: auto;",
-        tableOutput("outlier_preview"))
-  ),
-
-  # ── Tab 5 : Aggregate & Output ────────────────────────────────────────────
+  # ── Tab 5 : Aggregate & Output ───────────────────────────────────────────
   tabPanel(
     "5. Output",
     sidebarLayout(
