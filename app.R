@@ -960,7 +960,7 @@ server <- function(input, output, session) {
             "SD-based Only"              = "sd",
             "Both (Hard Limits First)"   = "both"
           ),
-          selected = "none",
+          selected = isolate(input[[paste0(pfx, "_type")]]) %||% "none",
           inline   = TRUE
         ),
 
@@ -971,8 +971,10 @@ server <- function(input, output, session) {
             pfx, pfx
           ),
           fluidRow(
-            column(4, numericInput(paste0(pfx, "_min"), "Lower Limit:", value = NA)),
-            column(4, numericInput(paste0(pfx, "_max"), "Upper Limit:", value = NA))
+            column(4, numericInput(paste0(pfx, "_min"), "Lower Limit:",
+                                   value = isolate(input[[paste0(pfx, "_min")]]) %||% NA)),
+            column(4, numericInput(paste0(pfx, "_max"), "Upper Limit:",
+                                   value = isolate(input[[paste0(pfx, "_max")]]) %||% NA))
           )
         ),
 
@@ -982,15 +984,16 @@ server <- function(input, output, session) {
             "input['%s_type'] == 'sd' || input['%s_type'] == 'both'",
             pfx, pfx
           ),
-          sliderInput(paste0(pfx, "_sd"), "SD Multiplier (mean \u00b1 k\u00b7SD):",
-                      min = 2, max = 4, value = 2, step = 0.5, width = "40%")
+          numericInput(paste0(pfx, "_sd"), "SD Multiplier (mean \u00b1 k\u00b7SD):",
+                       value = isolate(input[[paste0(pfx, "_sd")]]) %||% 2,
+                       min = 0.1, step = 0.5)
         )
       )
     })
 
     tagList(
       selectInput("outlier_cols", "Columns to apply outlier removal:",
-                  choices = cols, multiple = TRUE, selected = NULL),
+                  choices = cols, multiple = TRUE, selected = sel_cols),
       do.call(tagList, panels)
     )
   })
