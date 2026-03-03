@@ -463,9 +463,8 @@ server <- function(input, output, session) {
     })
 
     # Apply renames (keyed by position in raw_data(), which has no index)
-    for (i in seq_along(all_cols)) {
+    for (i in which(all_cols %in% keep_cols)) {
       col <- all_cols[i]
-      if (!(col %in% keep_cols)) next
       new_name <- trimws(input[[paste0("rename_col_", i)]] %||% col)
       if (nzchar(new_name) && new_name != col && !(new_name %in% names(df)))
         names(df)[names(df) == col] <- new_name
