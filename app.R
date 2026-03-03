@@ -390,16 +390,29 @@ server <- function(input, output, session) {
     req(raw_data())
     cols <- names(raw_data())
     tagList(
-      h4("Remove Columns"),
-      checkboxGroupInput("remove_cols", NULL, choices = cols)
+      h4("Keep Columns"),
+      fluidRow(
+        column(6, actionButton("keep_cols_all",  "Select All",   class = "btn-xs btn-default")),
+        column(6, actionButton("keep_cols_none", "Deselect All", class = "btn-xs btn-default"))
+      ),
+      checkboxGroupInput("keep_cols", NULL, choices = cols, selected = cols)
     )
+  })
+
+  observeEvent(input$keep_cols_all, {
+    req(raw_data())
+    updateCheckboxGroupInput(session, "keep_cols", selected = names(raw_data()))
+  })
+
+  observeEvent(input$keep_cols_none, {
+    updateCheckboxGroupInput(session, "keep_cols", selected = character(0))
   })
 
   output$ui_rename_cols <- renderUI({
     req(raw_data())
-    all_cols <- names(raw_data())
-    rm_cols  <- input$remove_cols %||% character(0)
-    keep_idx <- which(!(all_cols %in% rm_cols))
+    all_cols  <- names(raw_data())
+    keep_cols <- input$keep_cols %||% all_cols
+    keep_idx  <- which(all_cols %in% keep_cols)
     if (length(keep_idx) == 0)
       return(tagList(h4("Rename Columns"), p("No columns to rename.")))
     inputs <- lapply(keep_idx, function(i) {
@@ -415,13 +428,13 @@ server <- function(input, output, session) {
 
   upload_data <- reactive({
     req(raw_files())
-    dfs      <- raw_files()
-    all_cols <- names(raw_data())
-    rm_cols  <- input$remove_cols %||% character(0)
+    dfs       <- raw_files()
+    all_cols  <- names(raw_data())
+    keep_cols <- input$keep_cols %||% all_cols
 
-    # Per-file: remove selected columns, then add index before combining
+    # Per-file: keep only selected columns, then add index before combining
     dfs <- lapply(dfs, function(d) {
-      d <- d[, setdiff(names(d), rm_cols), drop = FALSE]
+      d <- d[, keep_cols[keep_cols %in% names(d)], drop = FALSE]
       if (isTRUE(input$add_index)) {
         idx_name <- trimws(input$index_col_name %||% "index")
         if (!nzchar(idx_name)) idx_name <- "index"
@@ -452,7 +465,7 @@ server <- function(input, output, session) {
     # Apply renames (keyed by position in raw_data(), which has no index)
     for (i in seq_along(all_cols)) {
       col <- all_cols[i]
-      if (col %in% rm_cols) next
+      if (!(col %in% keep_cols)) next
       new_name <- trimws(input[[paste0("rename_col_", i)]] %||% col)
       if (nzchar(new_name) && new_name != col && !(new_name %in% names(df)))
         names(df)[names(df) == col] <- new_name
