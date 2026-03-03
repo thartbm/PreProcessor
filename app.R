@@ -1045,6 +1045,16 @@ server <- function(input, output, session) {
       hr(),
       h4("D-prime Pairs"),
       checkboxInput("dp_hautus", "Hautus correction", value = FALSE),
+      checkboxGroupInput(
+        "dp_stats",
+        "D-prime output statistics:",
+        choices  = c("d-prime" = "dprime", "beta" = "beta",
+                     "c" = "c", "sensitivity" = "sensitivity",
+                     "specificity" = "specificity"),
+        selected = "dprime",
+        inline   = TRUE
+      ),
+      checkboxInput("dp_include_cowank", "Include Cowan\u2019s K in output", value = TRUE),
       p(em("Select pairs of binary (0/1 or FALSE/TRUE) DVs.")),
       lapply(1:3, function(i) {
         tagList(
@@ -1200,15 +1210,17 @@ server <- function(input, output, session) {
           c(dp_res, list(h = h, m = m, fa = fa, cr = cr))
         })
 
-        dp_df <- groups_df
-        for (stat in c("dprime", "beta", "c", "sensitivity", "specificity")) {
+        dp_df    <- groups_df
+        # Only include statistics the user has selected; empty selection = none.
+        dp_stats <- input$dp_stats %||% character(0)
+        for (stat in intersect(c("dprime", "beta", "c", "sensitivity", "specificity"), dp_stats)) {
           dp_df[[paste0(stat, "__", prefix)]] <-
             sapply(dp_rows, function(r) r[[stat]])
         }
 
         # Cowan's K if a positive N is supplied for this pair.
         n_val <- input[[paste0("dp_n_", pair_idx)]]
-        if (!is.null(n_val) && !is.na(n_val) && n_val > 0) {
+        if (!is.null(n_val) && !is.na(n_val) && n_val > 0 && isTRUE(input$dp_include_cowank)) {
           dp_df[[paste0("cowank__", prefix)]] <- sapply(dp_rows, function(r) {
             if ((r$h + r$m) == 0 || (r$fa + r$cr) == 0) return(NA_real_)
             cowan_k(r$h, r$m, r$fa, r$cr, n_val)
