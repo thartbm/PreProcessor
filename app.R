@@ -1090,20 +1090,8 @@ server <- function(input, output, session) {
   })
 
   # ── Mutual exclusivity: mean \u2192 median \u2192 d-prime (cascade) ──────────────────────
-  # When mean selection changes, restrict median choices to unselected DVs.
-  observeEvent(input$dvs_mean, {
-    dvs      <- isolate(selected_dvs())
-    mean_sel <- input$dvs_mean %||% character(0)
-    avail    <- setdiff(dvs, mean_sel)
-    new_med  <- intersect(isolate(input$dvs_median) %||% character(0), avail)
-    updateSelectInput(session, "dvs_median", choices = avail, selected = new_med)
-  }, ignoreNULL = FALSE, ignoreInit = FALSE)
-
-  # When median selection changes, restrict d-prime choices accordingly.
-  observeEvent(input$dvs_median, {
-    dvs        <- isolate(selected_dvs())
-    mean_sel   <- isolate(input$dvs_mean)   %||% character(0)
-    median_sel <- input$dvs_median %||% character(0)
+  # Helper: push fresh d-prime choices given the current mean+median selections.
+  update_dp_choices <- function(dvs, mean_sel, median_sel) {
     avail_dp   <- setdiff(dvs, c(mean_sel, median_sel))
     dp_choices <- c("(none)" = "", avail_dp)
     for (i in 1:3) {
@@ -1114,6 +1102,27 @@ server <- function(input, output, session) {
                           selected = if (nzchar(cur) && cur %in% avail_dp) cur else "")
       }
     }
+  }
+
+  # When mean selection changes: restrict median to unselected DVs, then
+  # refresh d-prime choices based on the resulting mean+median state.
+  # (d-prime must be updated here too because dvs_median's *value* often does
+  # not change when mean changes, so observeEvent(dvs_median) would not fire.)
+  observeEvent(input$dvs_mean, {
+    dvs      <- isolate(selected_dvs())
+    mean_sel <- input$dvs_mean %||% character(0)
+    avail    <- setdiff(dvs, mean_sel)
+    new_med  <- intersect(isolate(input$dvs_median) %||% character(0), avail)
+    updateSelectInput(session, "dvs_median", choices = avail, selected = new_med)
+    update_dp_choices(dvs, mean_sel, new_med)
+  }, ignoreNULL = FALSE, ignoreInit = FALSE)
+
+  # When median selection changes, refresh d-prime choices accordingly.
+  observeEvent(input$dvs_median, {
+    dvs        <- isolate(selected_dvs())
+    mean_sel   <- isolate(input$dvs_mean) %||% character(0)
+    median_sel <- input$dvs_median %||% character(0)
+    update_dp_choices(dvs, mean_sel, median_sel)
   }, ignoreNULL = FALSE, ignoreInit = FALSE)
 
   # ── Participant-level descriptives ────────────────────────────────────────
@@ -1175,19 +1184,21 @@ server <- function(input, output, session) {
     dp_dvs <- unique(unlist(lapply(dp_pairs, function(p) c(p$target, p$response))))
 
     # Mean/median lists; DVs assigned to d-prime are excluded.
-    dvs_mean   <- setdiff(input$dvs_mean   %||% dvs,          dp_dvs)
+    # Use character(0) (not dvs) as the fallback so that explicitly clearing
+    # dvs_mean produces an empty mean list rather than silently re-adding all DVs.
+    dvs_mean   <- setdiff(input$dvs_mean   %||% character(0), dp_dvs)
     dvs_median <- setdiff(input$dvs_median %||% character(0), c(dp_dvs, dvs_mean))
 
     # ── Aggregate mean DVs ──────────────────────────────────────────────────
     agg_list <- lapply(dvs_mean, function(dv) {
       aggregate(as.formula(paste(dv, "~", rhs)), data = df,
-                FUN = function(x) mean(x, na.rm = TRUE), na.action = na.pass)
+                FUN = function(x) mean(x, na.rm = TRUE), na.action = na.omit)
     })
 
     # ── Aggregate median DVs ────────────────────────────────────────────────
     agg_list <- c(agg_list, lapply(dvs_median, function(dv) {
       aggregate(as.formula(paste(dv, "~", rhs)), data = df,
-                FUN = function(x) median(x, na.rm = TRUE), na.action = na.pass)
+                FUN = function(x) median(x, na.rm = TRUE), na.action = na.omit)
     }))
 
     # ── Compute d-prime for each pair ───────────────────────────────────────
