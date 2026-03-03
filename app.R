@@ -248,11 +248,11 @@ ui <- navbarPage(
         p("Any number of columns describing the participant (optional)."),
         uiOutput("ui_info"),
         hr(),
-        h4("Independent Variables (up to 4)"),
+        h4("Independent Variables (up to 5)"),
         p("Discrete or categorical variables."),
         uiOutput("ui_ivs"),
         hr(),
-        h4("Dependent Variables (up to 3)"),
+        h4("Dependent Variables (up to 5)"),
         p("Continuous variables to be analyzed."),
         uiOutput("ui_dvs")
       ),
@@ -779,7 +779,8 @@ server <- function(input, output, session) {
       selectInput("iv1", "IV 1:", choices = choices, selected = ""),
       selectInput("iv2", "IV 2:", choices = choices, selected = ""),
       selectInput("iv3", "IV 3:", choices = choices, selected = ""),
-      selectInput("iv4", "IV 4:", choices = choices, selected = "")
+      selectInput("iv4", "IV 4:", choices = choices, selected = ""),
+      selectInput("iv5", "IV 5:", choices = choices, selected = "")
     )
   })
 
@@ -790,18 +791,20 @@ server <- function(input, output, session) {
     tagList(
       selectInput("dv1", "DV 1:", choices = choices, selected = ""),
       selectInput("dv2", "DV 2:", choices = choices, selected = ""),
-      selectInput("dv3", "DV 3:", choices = choices, selected = "")
+      selectInput("dv3", "DV 3:", choices = choices, selected = ""),
+      selectInput("dv4", "DV 4:", choices = choices, selected = ""),
+      selectInput("dv5", "DV 5:", choices = choices, selected = "")
     )
   })
 
   # ── Helpers: selected IVs / DVs ───────────────────────────────────────────
   selected_ivs <- reactive({
-    ivs <- c(input$iv1, input$iv2, input$iv3, input$iv4)
+    ivs <- c(input$iv1, input$iv2, input$iv3, input$iv4, input$iv5)
     unique(ivs[nzchar(ivs)])
   })
 
   selected_dvs <- reactive({
-    dvs <- c(input$dv1, input$dv2, input$dv3)
+    dvs <- c(input$dv1, input$dv2, input$dv3, input$dv4, input$dv5)
     unique(dvs[nzchar(dvs)])
   })
 
