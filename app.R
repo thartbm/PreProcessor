@@ -280,13 +280,13 @@ ui <- navbarPage(
     ),
     fluidRow(
       column(12,
-        p("For each dependent variable you can apply hard limits, SD-based removal,
+        p("For each selected column you can apply hard limits, SD-based removal,
           both (hard limits are applied first), or no removal at all."),
         uiOutput("outlier_ui")
       )
     ),
     hr(),
-    h4("Data after Row Removal (first 10 rows)"),
+    h4("Data after Outlier Removal (first 10 rows)"),
     div(style = "overflow-x: auto;",
         tableOutput("outlier_preview"))
   ),
@@ -798,21 +798,21 @@ server <- function(input, output, session) {
 
   # ── Column selection UIs ──────────────────────────────────────────────────
   output$ui_participant <- renderUI({
-    req(derived_data())
-    cols <- names(derived_data())
+    req(clean_data())
+    cols <- names(clean_data())
     selectInput("participant_col", "Participant ID Column:",
                 choices = cols, multiple = FALSE)
   })
 
   output$ui_info <- renderUI({
-    req(derived_data())
-    cols <- names(derived_data())
+    req(clean_data())
+    cols <- names(clean_data())
     checkboxGroupInput("info_cols", NULL, choices = cols)
   })
 
   output$ui_ivs <- renderUI({
-    req(derived_data())
-    cols <- names(derived_data())
+    req(clean_data())
+    cols <- names(clean_data())
     choices <- c("(none)" = "", cols)
     tagList(
       selectInput("iv1", "IV 1:", choices = choices, selected = ""),
@@ -824,8 +824,8 @@ server <- function(input, output, session) {
   })
 
   output$ui_dvs <- renderUI({
-    req(derived_data())
-    cols <- names(derived_data())
+    req(clean_data())
+    cols <- names(clean_data())
     choices <- c("(none)" = "", cols)
     tagList(
       selectInput("dv1", "DV 1:", choices = choices, selected = ""),
@@ -849,7 +849,7 @@ server <- function(input, output, session) {
 
   # ── Filtered data ──────────────────────────────────────────────────────────
   filtered_data <- reactive({
-    req(row_filtered_data(), input$participant_col)
+    req(clean_data(), input$participant_col)
 
     part <- input$participant_col
     info <- input$info_cols  # may be NULL
@@ -857,9 +857,9 @@ server <- function(input, output, session) {
     dvs  <- selected_dvs()
 
     keep <- unique(c(part, info, ivs, dvs))
-    keep <- keep[keep %in% names(row_filtered_data())]
+    keep <- keep[keep %in% names(clean_data())]
 
-    df <- row_filtered_data()[, keep, drop = FALSE]
+    df <- clean_data()[, keep, drop = FALSE]
 
     # Remove rows with any missing DV value
     if (length(dvs) > 0) {
@@ -939,19 +939,18 @@ server <- function(input, output, session) {
     })
   })
 
-  # ── Outlier UI (one panel per DV, index-based IDs for safety) ─────────────
+  # ── Outlier UI (one panel per selected column, index-based IDs for safety) ──
   output$outlier_ui <- renderUI({
-    dvs <- selected_dvs()
-    if (length(dvs) == 0) {
-      return(p("Please select at least one dependent variable in the Variables tab."))
-    }
+    req(row_filtered_data())
+    cols     <- names(row_filtered_data())
+    sel_cols <- input$outlier_cols %||% character(0)
 
-    panels <- lapply(seq_along(dvs), function(i) {
-      dv  <- dvs[i]
+    panels <- lapply(seq_along(sel_cols), function(i) {
+      col <- sel_cols[i]
       pfx <- paste0("ot", i)   # prefix: ot1 / ot2 / ot3
 
       wellPanel(
-        h4(paste("Dependent Variable:", dv)),
+        h4(paste("Column:", col)),
 
         radioButtons(
           paste0(pfx, "_type"), "Outlier Removal Method:",
@@ -983,31 +982,35 @@ server <- function(input, output, session) {
             "input['%s_type'] == 'sd' || input['%s_type'] == 'both'",
             pfx, pfx
           ),
-          sliderInput(paste0(pfx, "_sd"), "SD Multiplier (mean ± k·SD):",
+          sliderInput(paste0(pfx, "_sd"), "SD Multiplier (mean \u00b1 k\u00b7SD):",
                       min = 2, max = 4, value = 2, step = 0.5, width = "40%")
         )
       )
     })
 
-    do.call(tagList, panels)
+    tagList(
+      selectInput("outlier_cols", "Columns to apply outlier removal:",
+                  choices = cols, multiple = TRUE, selected = NULL),
+      do.call(tagList, panels)
+    )
   })
 
   # ── Apply outlier removal ─────────────────────────────────────────────────
   clean_data <- reactive({
-    req(filtered_data())
-    dvs <- selected_dvs()
-    if (length(dvs) == 0) return(filtered_data())
+    req(row_filtered_data())
+    cols <- input$outlier_cols %||% character(0)
+    if (length(cols) == 0) return(row_filtered_data())
 
-    df <- filtered_data()
+    df <- row_filtered_data()
 
-    for (i in seq_along(dvs)) {
-      dv  <- dvs[i]
+    for (i in seq_along(cols)) {
+      col <- cols[i]
       pfx <- paste0("ot", i)
 
       otype <- input[[paste0(pfx, "_type")]]
       if (is.null(otype) || otype == "none") next
 
-      vals <- df[[dv]]
+      vals <- df[[col]]
 
       # 1. Hard limits (applied before SD when "both")
       if (otype %in% c("hard", "both")) {
@@ -1027,15 +1030,15 @@ server <- function(input, output, session) {
         vals[is_outlier] <- NA
       }
 
-      df[[dv]] <- vals
+      df[[col]] <- vals
     }
 
     df
   })
 
   output$outlier_preview <- renderTable({
-    req(row_filtered_data())
-    head(row_filtered_data(), 10)
+    req(clean_data())
+    head(clean_data(), 10)
   })
 
   # ── Tab 5 aggregation UI ─────────────────────────────────────────────────
