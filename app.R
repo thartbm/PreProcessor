@@ -1072,20 +1072,13 @@ server <- function(input, output, session) {
         selected = "dprime",
         inline   = TRUE
       ),
-      checkboxInput("dp_include_cowank", "Include Cowan\u2019s K in output", value = TRUE),
-      p(em("Select pairs of binary (0/1 or FALSE/TRUE) DVs.")),
-      lapply(1:3, function(i) {
-        tagList(
-          strong(paste("Pair", i, ":")),
-          selectInput(paste0("dp_target_",   i), "Target present:",
-                      choices = dp_choices, selected = ""),
-          selectInput(paste0("dp_response_", i), "Response:",
-                      choices = dp_choices, selected = ""),
-          numericInput(paste0("dp_n_", i),
-                       "N for Cowan\u2019s K (0 = skip):",
-                       value = 0, min = 0, step = 1)
-        )
-      })
+      p(em("Select a pair of binary (0/1 or FALSE/TRUE) DVs.")),
+      tagList(
+        selectInput("dp_target_1", "Target present:",
+                    choices = dp_choices, selected = ""),
+        selectInput("dp_response_1", "Response:",
+                    choices = dp_choices, selected = "")
+      )
     )
   })
 
@@ -1094,13 +1087,11 @@ server <- function(input, output, session) {
   update_dp_choices <- function(dvs, mean_sel, median_sel) {
     avail_dp   <- setdiff(dvs, c(mean_sel, median_sel))
     dp_choices <- c("(none)" = "", avail_dp)
-    for (i in 1:3) {
-      for (sfx in c("target", "response")) {
-        id  <- paste0("dp_", sfx, "_", i)
-        cur <- isolate(input[[id]]) %||% ""
-        updateSelectInput(session, id, choices = dp_choices,
-                          selected = if (nzchar(cur) && cur %in% avail_dp) cur else "")
-      }
+    for (sfx in c("target", "response")) {
+      id  <- paste0("dp_", sfx, "_1")
+      cur <- isolate(input[[id]]) %||% ""
+      updateSelectInput(session, id, choices = dp_choices,
+                        selected = if (nzchar(cur) && cur %in% avail_dp) cur else "")
     }
   }
 
@@ -1173,15 +1164,13 @@ server <- function(input, output, session) {
 
     # ── Per-DV function assignments ─────────────────────────────────────────
     # Collect d-prime pairs first (they take priority over mean/median).
-    dp_pairs <- Filter(Negate(is.null), lapply(1:3, function(i) {
-      tgt <- input[[paste0("dp_target_",   i)]] %||% ""
-      rsp <- input[[paste0("dp_response_", i)]] %||% ""
-      if (nzchar(tgt) && nzchar(rsp) && tgt %in% names(df) && rsp %in% names(df))
-        list(target = tgt, response = rsp)
-      else
-        NULL
-    }))
-    dp_dvs <- unique(unlist(lapply(dp_pairs, function(p) c(p$target, p$response))))
+    tgt <- input$dp_target_1   %||% ""
+    rsp <- input$dp_response_1 %||% ""
+    dp_pairs <- if (nzchar(tgt) && nzchar(rsp) && tgt %in% names(df) && rsp %in% names(df))
+      list(list(target = tgt, response = rsp))
+    else
+      list()
+    dp_dvs <- unique(c(tgt, rsp)[c(nzchar(tgt), nzchar(rsp))])
 
     # Mean/median lists; DVs assigned to d-prime are excluded.
     # Use character(0) (not dvs) as the fallback so that explicitly clearing
@@ -1245,15 +1234,6 @@ server <- function(input, output, session) {
         for (stat in intersect(c("dprime", "beta", "c", "sensitivity", "specificity"), dp_stats)) {
           dp_df[[paste0(stat, "__", prefix)]] <-
             sapply(dp_rows, function(r) r[[stat]])
-        }
-
-        # Cowan's K if a positive N is supplied for this pair.
-        n_val <- input[[paste0("dp_n_", pair_idx)]]
-        if (!is.null(n_val) && !is.na(n_val) && n_val > 0 && isTRUE(input$dp_include_cowank)) {
-          dp_df[[paste0("cowank__", prefix)]] <- sapply(dp_rows, function(r) {
-            if ((r$h + r$m) == 0 || (r$fa + r$cr) == 0) return(NA_real_)
-            cowan_k(r$h, r$m, r$fa, r$cr, n_val)
-          })
         }
 
         rownames(dp_df) <- NULL
