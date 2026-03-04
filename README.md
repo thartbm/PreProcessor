@@ -34,6 +34,7 @@ Load one or more CSV files and tidy up column names before any further processin
   - *Tab* (`\t`)
 - **Add index column** – tick this checkbox to prepend a sequential row-index column (1, 2, 3, …) to each file *before* they are combined. This is useful for tracking the original row order within each file after merging.
   - **Index Column Name** – the name to give the index column (default: `index`). If the name already exists in the file a numeric suffix is added automatically (e.g. `index_1`).
+- **NA specification** – list strings to convert to `NA`. This allows some columns to be converted to numeric.
 - **Remove Columns** – tick any columns that should be dropped from the dataset entirely.
 - **Rename Columns** – type a new name for any column you want to rename. The text box for each column is pre-filled with the original name; leave it unchanged to keep the original name.
 
@@ -76,28 +77,7 @@ The main panel shows a **Data Preview** (first 10 rows) that includes all create
 
 ---
 
-### 3. Variables
-
-Assign data columns to the roles used by the rest of the pipeline.
-
-**Roles:**
-
-| Role | Limit | Description |
-|------|-------|-------------|
-| **Participant ID** | 1 column | Uniquely identifies each participant. |
-| **Information Columns** | Any number (optional) | Descriptive columns about the participant (e.g. age, group). These are passed through to the output but are not used in aggregation. |
-| **Independent Variables (IVs)** | Up to 4 | Discrete or categorical factors (IV 1 – IV 4). |
-| **Dependent Variables (DVs)** | Up to 3 | Continuous outcome measures (DV 1 – DV 3). |
-
-Rows that have a missing value (`NA`) in *any* selected DV are automatically removed.
-
-The main panel shows:
-- **Column Summary** – lists which column is assigned to each role and the number of rows remaining after NA removal.
-- **Filtered Data Preview** – first 10 rows of the dataset restricted to the assigned columns, with incomplete DV rows removed.
-
----
-
-### 4. Outliers
+### 3. Trial removal
 
 Filter out rows and replace extreme DV values with `NA` before aggregation.
 
@@ -124,6 +104,27 @@ The main panel shows a **Data after Outlier Removal** preview (first 10 rows).
 
 ---
 
+### 4. Variables
+
+Assign data columns to the roles used by the rest of the pipeline.
+
+**Roles:**
+
+| Role | Limit | Description |
+|------|-------|-------------|
+| **Participant ID** | 1 column | Uniquely identifies each participant. |
+| **Information Columns** | Any number (optional) | Descriptive columns about the participant (e.g. age, group). These are passed through to the output but are not used in aggregation. |
+| **Independent Variables (IVs)** | Up to 4 | Discrete or categorical factors (IV 1 – IV 4). |
+| **Dependent Variables (DVs)** | Up to 3 | Continuous outcome measures (DV 1 – DV 3). |
+
+Rows that have a missing value (`NA`) in *any* selected DV are automatically removed.
+
+The main panel shows:
+- **Column Summary** – lists which column is assigned to each role and the number of rows remaining after NA removal.
+- **Filtered Data Preview** – first 10 rows of the dataset restricted to the assigned columns, with incomplete DV rows removed.
+
+---
+
 ### 5. Output
 
 Aggregate the cleaned data and download the result.
@@ -133,8 +134,9 @@ Aggregate the cleaned data and download the result.
 - **Summary Function** – statistic used to aggregate each DV within each group:
   - *Mean* (default)
   - *Median*
+- **D-prime** – select two (boolean or int 0/1) columns to calculate d-prime, one listing whether or not the target stimulus was shown, and one listing whether the participant responded the stimulus was present
 - **Output Format** – shape of the downloaded CSV:
-  - *Wide* (default) – one row per participant; when IVs are selected, each DV × IV-combination gets its own column, named `<DV>__<IV1>=<val1>__<IV2>=<val2>…`
+  - *Wide* (default) – one row per participant; when IVs are selected above, each DV × IV-combination gets its own column, named `<DV>__<IV1>=<val1>__<IV2>=<val2>…`
   - *Long* – one row per participant per DV, with a `variable` column holding the DV name and a `value` column holding the aggregated value.
 - **Download CSV** – saves the aggregated data to a timestamped `.csv` file.
 
