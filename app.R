@@ -530,7 +530,7 @@ server <- function(input, output, session) {
     df[] <- lapply(df, function(col) {
       if (!is.character(col) || !any(is.na(col))) return(col)
       num_col <- suppressWarnings(as.numeric(col))
-      if (sum(is.na(num_col)) <= sum(is.na(col))) num_col else col
+      if (sum(is.na(num_col)) < length(col)) num_col else col
     })
 
     # Apply column selection (index cols are always kept)
