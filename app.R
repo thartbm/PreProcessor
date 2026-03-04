@@ -523,11 +523,14 @@ server <- function(input, output, session) {
     }
 
     # Convert columns to numeric where now possible
+    # Only attempt character columns that already contain NAs (introduced by the
+    # NA-string replacement above).  Accept the conversion only when it does not
+    # produce more NAs than were already present (i.e. all non-NA values are
+    # valid numbers).
     df[] <- lapply(df, function(col) {
-      if (is.numeric(col)) return(col)
-      num_col <- suppressWarnings(as.numeric(as.character(col)))
-      new_nas <- is.na(num_col) & !is.na(col)
-      if (!any(new_nas)) num_col else col
+      if (!is.character(col) || !any(is.na(col))) return(col)
+      num_col <- suppressWarnings(as.numeric(col))
+      if (sum(is.na(num_col)) <= sum(is.na(col))) num_col else col
     })
 
     # Apply column selection (index cols are always kept)
