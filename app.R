@@ -187,6 +187,51 @@ cowan_k <- function(hits, misses, fas, crs, N) {
   (hit_rate + cr_rate - 1) * N
 }
 
+# ── Preview table helpers ─────────────────────────────────────────────────────
+
+col_type_label <- function(col) {
+  cls <- class(col)[1]
+  switch(cls,
+    "numeric"   = "num",
+    "integer"   = "int",
+    "logical"   = "logi",
+    "character" = "chr",
+    "factor"    = paste0("Factor w/ ", nlevels(col), " lvls"),
+    cls
+  )
+}
+
+preview_with_types <- function(df, n = 10) {
+  data      <- head(df, n)
+  col_names <- names(df)
+  types     <- vapply(df, col_type_label, character(1))
+  esc       <- htmltools::htmlEscape
+
+  th_cells   <- paste0("<th>", esc(col_names), "</th>", collapse = "")
+  type_cells <- paste0('<td style="font-style:italic;color:#888888;">',
+                       esc(types), "</td>", collapse = "")
+  data_rows <- vapply(seq_len(nrow(data)), function(i) {
+    cells <- paste0("<td>", esc(vapply(col_names, function(cn) {
+      v <- data[[cn]][i]
+      if (is.na(v)) "NA" else as.character(v)
+    }, character(1))), "</td>", collapse = "")
+    paste0("<tr>", cells, "</tr>")
+  }, character(1))
+
+  html <- paste0(
+    '<table class="table table-condensed table-bordered">',
+    "<thead>",
+    "<tr>", th_cells, "</tr>",
+    '<tr style="background-color:#f9f9f9;">', type_cells, "</tr>",
+    "</thead>",
+    "<tbody>",
+    paste(data_rows, collapse = ""),
+    "</tbody>",
+    "</table>"
+  )
+  HTML(html)
+}
+
 # ── UI ──────────────────────────────────────────────────────────────────────
 
 ui <- navbarPage(
@@ -230,7 +275,7 @@ ui <- navbarPage(
         width = 9,
         h4("Data Preview (first 10 rows)"),
         div(style = "overflow-x: auto;",
-            tableOutput("preview"))
+            uiOutput("preview"))
       )
     )
   ),
@@ -268,7 +313,7 @@ ui <- navbarPage(
         width = 8,
         h4("Data Preview with New Columns (first 10 rows)"),
         div(style = "overflow-x: auto;",
-            tableOutput("nc_preview"))
+            uiOutput("nc_preview"))
       )
     )
   ),
@@ -294,7 +339,7 @@ ui <- navbarPage(
     hr(),
     h4("Data after Outlier Removal (first 10 rows)"),
     div(style = "overflow-x: auto;",
-        tableOutput("outlier_preview"))
+        uiOutput("outlier_preview"))
   ),
 
   # ── Tab 4 : Column Assignment ─────────────────────────────────────────────
@@ -324,7 +369,7 @@ ui <- navbarPage(
         verbatimTextOutput("col_summary"),
         h4("Filtered Data Preview (rows with complete DVs, first 10 rows)"),
         div(style = "overflow-x: auto;",
-            tableOutput("filtered_preview"))
+            uiOutput("filtered_preview"))
       )
     )
   ),
@@ -350,7 +395,7 @@ ui <- navbarPage(
         width = 9,
         h4("Aggregated Data Preview (first 20 rows)"),
         div(style = "overflow-x: auto;",
-            tableOutput("agg_preview"))
+            uiOutput("agg_preview"))
       )
     )
   )
@@ -500,9 +545,9 @@ server <- function(input, output, session) {
     df
   })
 
-  output$preview <- renderTable({
+  output$preview <- renderUI({
     req(upload_data())
-    head(upload_data(), 10)
+    preview_with_types(upload_data())
   })
 
   # ── Column definitions & derived data ────────────────────────────────────
@@ -819,9 +864,9 @@ server <- function(input, output, session) {
     col_defs(Filter(function(d) d$name != sel, col_defs()))
   })
 
-  output$nc_preview <- renderTable({
+  output$nc_preview <- renderUI({
     req(derived_data())
-    head(derived_data(), 10)
+    preview_with_types(derived_data())
   })
 
   # ── Column selection UIs ──────────────────────────────────────────────────
@@ -909,9 +954,9 @@ server <- function(input, output, session) {
         if (!is.null(filtered_data())) nrow(filtered_data()) else 0, "\n")
   })
 
-  output$filtered_preview <- renderTable({
+  output$filtered_preview <- renderUI({
     req(filtered_data())
-    head(filtered_data(), 10)
+    preview_with_types(filtered_data())
   })
 
   # ── Row Removal UI ────────────────────────────────────────────────────────
@@ -1067,9 +1112,9 @@ server <- function(input, output, session) {
     df
   })
 
-  output$outlier_preview <- renderTable({
+  output$outlier_preview <- renderUI({
     req(clean_data())
-    head(clean_data(), 10)
+    preview_with_types(clean_data())
   })
 
   # ── Tab 5 aggregation UI ─────────────────────────────────────────────────
@@ -1336,9 +1381,9 @@ server <- function(input, output, session) {
     }
   })
 
-  output$agg_preview <- renderTable({
+  output$agg_preview <- renderUI({
     req(output_data())
-    head(output_data(), 20)
+    preview_with_types(output_data(), n = 20)
   })
 
   # ── Download ──────────────────────────────────────────────────────────────
